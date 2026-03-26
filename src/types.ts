@@ -24,6 +24,21 @@ export type RoomMessage = {
   tick: number
 }
 
+export type RobotSetup = {
+  robotName: string
+  robotIdentity: string
+  robotLook: string
+}
+
+export type Player = {
+  id: string
+  name: string
+  isHost: boolean
+  isConnected: boolean
+  isReady: boolean
+  robotSetup?: RobotSetup
+}
+
 export type GameState = {
   phase: 'lobby' | 'setup' | 'playing' | 'vog' | 'council' | 'ended'
   map: RoomData[]
@@ -33,4 +48,14 @@ export type GameState = {
   totalKillers: number
   councilCooldown: number
   roomMessages?: Record<string, RoomMessage[]>
+  // God UI lobby state (client-only, managed by god-ui layer)
+  lobby?: LobbyState
+}
+
+export type LobbyState = {
+  roomId: string
+  roomCode: string
+  qrUrl: string
+  players: Player[]
+  isHost: boolean
 }

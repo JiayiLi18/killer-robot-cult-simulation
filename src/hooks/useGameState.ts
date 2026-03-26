@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { GameState, Robot, RoomData } from '../types'
+import { GameState, Robot, RoomData, Player, RobotSetup, LobbyState } from '../types'
 import { mockState } from '../mockState'
 
 function deepClone<T>(obj: T): T { return JSON.parse(JSON.stringify(obj)) }
@@ -26,7 +26,19 @@ function normalizeState(raw: Record<string, unknown>): GameState {
   }
 }
 
+function createInitialLobby(): LobbyState {
+  const roomCode = Math.random().toString(36).slice(2, 8).toUpperCase()
+  return {
+    roomId: `room-${roomCode}`,
+    roomCode,
+    qrUrl: `${window.location.origin}/join/${roomCode}`,
+    players: [],
+    isHost: false,
+  }
+}
+
 export interface GameActions {
+  // Original partner actions
   setPhase:           (phase: GameState['phase']) => void
   setCountdown:       (n: number) => void
   setCouncilCooldown: (n: number) => void
@@ -36,13 +48,21 @@ export interface GameActions {
   moveRobot:          (id: string, roomId: string) => void
   appendBeliefs:      (id: string, text: string) => void
   triggerVog:         (message: string) => void
+  // God UI lobby actions
+  joinRoom:           (name: string) => void
+  setReady:           (robotSetup: RobotSetup) => void
 }
 
 // ─── Mock mode (default) ─────────────────────────────────────────────────────
 
 function useMockState(): { state: GameState; actions: GameActions } {
-  const [state, setState] = useState<GameState>(() => deepClone(mockState))
-  const ref = useRef<GameState>(deepClone(mockState))
+  const [state, setState] = useState<GameState>(() => ({
+    ...deepClone(mockState),
+    phase: 'lobby' as const,
+    lobby: createInitialLobby(),
+  }))
+  const ref = useRef<GameState>(state)
+  ref.current = state
 
   const update = useCallback((fn: (s: GameState) => GameState) => {
     const next = fn(deepClone(ref.current))
@@ -78,6 +98,7 @@ function useMockState(): { state: GameState; actions: GameActions } {
 
     const moveTimer = setInterval(() => {
       update(s => {
+        if (s.phase !== 'playing' && s.phase !== 'vog') return s
         const alive = Object.values(s.robots).filter(r => r.status === 'alive')
         if (!alive.length) return s
         const robot = pickRandom(alive)
@@ -158,6 +179,39 @@ function useMockState(): { state: GameState; actions: GameActions } {
         return { ...s, phase: 'vog', countdown: 30, robots }
       })
     },
+
+    // God UI lobby actions
+    joinRoom: (name) => update(s => {
+      const playerId = `god_${Math.random().toString(36).slice(2, 8)}`
+      const player: Player = {
+        id: playerId,
+        name,
+        isHost: !s.lobby?.players.length,
+        isConnected: true,
+        isReady: false,
+      }
+      return {
+        ...s,
+        lobby: s.lobby ? {
+          ...s.lobby,
+          players: [...s.lobby.players, player],
+          isHost: !s.lobby.players.length,
+        } : undefined,
+      }
+    }),
+
+    setReady: (_robotSetup) => update(s => {
+      if (!s.lobby?.players.length) return s
+      const players = s.lobby.players.map((p, i) =>
+        i === s.lobby!.players.length - 1 ? { ...p, isReady: true, robotSetup: _robotSetup } : p
+      )
+      const allReady = players.length >= 2 && players.every(p => p.isReady)
+      return {
+        ...s,
+        lobby: { ...s.lobby, players },
+        phase: allReady ? 'playing' : s.phase,
+      }
+    }),
   }
 
   return { state, actions }
@@ -189,7 +243,6 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
 
       ws.onopen = () => {
         setConnected(true)
-        // Auto-join so we can send whispers/vog
         ws.send(JSON.stringify({ type: 'join', godId: GOD_ID }))
       }
 
@@ -205,7 +258,6 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
       ws.onclose = () => {
         setConnected(false)
         wsRef.current = null
-        // Attempt reconnect after 3s
         reconnectTimeout = setTimeout(connect, 3000)
       }
     }
@@ -217,8 +269,6 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
     }
   }, [])
 
-  // In WS mode, admin actions that change game state are no-ops
-  // (server is authoritative). Whisper/VoG translate to WS messages.
   const actions: GameActions = {
     setPhase:           () => { /* server controls phase */ },
     setCountdown:       () => { /* server controls countdown */ },
@@ -229,6 +279,8 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
     moveRobot:          () => { /* server controls movement */ },
     appendBeliefs: (id, text) => send({ type: 'whisper', godId: GOD_ID, targetRobotId: id, words: text }),
     triggerVog:    (message)  => send({ type: 'submitVog', godId: GOD_ID, words: message }),
+    joinRoom:      ()         => { /* auto-joined on WS connect */ },
+    setReady:      ()         => { /* server controls game start */ },
   }
 
   return { state, actions, connected }

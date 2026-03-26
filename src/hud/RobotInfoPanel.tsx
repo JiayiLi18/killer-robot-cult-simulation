@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Robot } from '../types'
 import { GameActions } from '../hooks/useGameState'
+import { ThreeWordInput } from '../god-ui/components/shared/ThreeWordInput'
 
 interface Props {
   robot: Robot
@@ -15,17 +16,18 @@ const STATUS_STYLE = {
   ejected: { dot: 'bg-orange-400', text: 'text-orange-300', label: 'Ejected' },
 }
 
+interface WhisperEntry {
+  words: string
+  timestamp: number
+}
+
 export function RobotInfoPanel({ robot, roomName, actions, onClose }: Props) {
   const [whispering, setWhispering] = useState(false)
-  const [input, setInput] = useState('')
+  const [recentWhispers, setRecentWhispers] = useState<WhisperEntry[]>([])
 
-  const words = input.trim().split(/\s+/).filter(Boolean)
-  const isValid = words.length === 3
-
-  const submitWhisper = () => {
-    if (!isValid) return
-    actions.appendBeliefs(robot.id, words.join(' '))
-    setInput('')
+  const submitWhisper = (words: string) => {
+    actions.appendBeliefs(robot.id, words)
+    setRecentWhispers(prev => [{ words, timestamp: Date.now() }, ...prev].slice(0, 10))
     setWhispering(false)
   }
 
@@ -97,33 +99,29 @@ export function RobotInfoPanel({ robot, roomName, actions, onClose }: Props) {
         ) : (
           <div className="space-y-2">
             <p className="text-xs text-gray-500">Enter exactly 3 words → appended to beliefs</p>
-            <input
-              autoFocus
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submitWhisper(); if (e.key === 'Escape') setWhispering(false) }}
-              placeholder="e.g.  trust the door"
-              className="w-full bg-gray-900 border border-purple-900 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-700 outline-none focus:border-purple-500 transition-colors"
+            <ThreeWordInput
+              onSubmit={submitWhisper}
+              placeholder="e.g. trust the door"
             />
-            <div className="flex gap-1.5 flex-wrap min-h-[22px]">
-              {words.map((w, i) => (
-                <span key={i} className="text-xs bg-purple-950 border border-purple-700 text-purple-200 px-2 py-0.5 rounded-full">{w}</span>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <button onClick={submitWhisper} disabled={!isValid}
-                className="flex-1 py-1.5 rounded-lg text-xs font-bold transition-all"
-                style={{
-                  background: isValid ? 'rgba(100,40,200,0.85)' : 'rgba(40,30,60,0.5)',
-                  color: isValid ? '#d4b0ff' : '#504060',
-                }}>
-                Whisper ({words.length}/3)
-              </button>
-              <button onClick={() => setWhispering(false)}
-                className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:text-white bg-gray-900 transition-colors">
-                Cancel
-              </button>
-            </div>
+            <button
+              onClick={() => setWhispering(false)}
+              className="w-full py-1.5 rounded-lg text-xs text-gray-500 hover:text-white bg-gray-900 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* Recent whispers feed */}
+        {recentWhispers.length > 0 && (
+          <div className="mt-3 space-y-1.5 max-h-24 overflow-y-auto">
+            <p className="text-xs text-gray-600 font-mono uppercase tracking-wider">Recent Whispers</p>
+            {recentWhispers.map((w, i) => (
+              <div key={i} className="text-xs text-purple-300 font-mono px-2 py-1 rounded bg-purple-950/40 border border-purple-900/30"
+                style={{ animation: 'fadeIn 0.3s ease-out' }}>
+                "{w.words}"
+              </div>
+            ))}
           </div>
         )}
       </div>
