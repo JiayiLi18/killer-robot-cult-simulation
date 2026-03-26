@@ -1,0 +1,28 @@
+export type RoomData = {
+  id: string
+  name: string
+  connections: string[]   // IDs of connected rooms
+  robots: string[]        // robot IDs currently in this room
+}
+
+export type Robot = {
+  id: string
+  name: string
+  look: string            // god prompt — appearance description / emoji
+  identity: string        // god prompt — who this robot is
+  beliefs: string         // concatenated whispers + voice of god messages
+  status: 'alive' | 'dead' | 'ejected'
+  roomId: string
+  imageUrl: string
+  lastMessage?: string | null   // shown as speech bubble (transient, display-only)
+}
+
+export type GameState = {
+  phase: 'lobby' | 'setup' | 'playing' | 'vog' | 'council' | 'ended'
+  map: RoomData[]
+  robots: Record<string, Robot>
+  countdown: number
+  killersFound: number
+  totalKillers: number
+  councilCooldown: number
+}

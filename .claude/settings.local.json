@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(printf \"\\\\nkillerrobotcult\\\\n\")",
+      "Bash(npm create:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}
