@@ -1,6 +1,18 @@
 # Killer Robot Cult Simulation
 
-Top-down cult sim: **Phaser** for the world, **React** for the shell and HUD, **WebSockets** for live game state. Multiple players act as **gods**, each tied to one robot on a hidden-role map (crewmates vs killers).
+Multiple players act as **gods**, each tied to one robot on a hidden-role map (crewmates vs killers).
+
+## Demo
+
+[Watch on YouTube](https://youtu.be/9IQ4GIS49tU)
+
+## Slides
+
+![Slide 1](slides/KRC-slide-1.png)
+
+![Slide 2](slides/KRC-slide-2.png)
+
+![Slide 3](slides/KRC-slide-3.png)
 
 ## Game mechanics
 
@@ -20,18 +32,6 @@ Top-down cult sim: **Phaser** for the world, **React** for the shell and HUD, **
 - **`Game` / `VoiceOfGodManager`** — Lobby and rules facade; Voice-of-God phase machine (submit → vote → resolve → apply to all agents).
 
 Details and defaults live in [`backend/README.md`](backend/README.md) and `backend/src/types/index.ts`.
-
-## Demo
-
-[Watch on YouTube](https://youtu.be/9IQ4GIS49tU)
-
-## Slides
-
-![Slide 1](slides/KRC-slide-1.png)
-
-![Slide 2](slides/KRC-slide-2.png)
-
-![Slide 3](slides/KRC-slide-3.png)
 
 ## Run locally
 
