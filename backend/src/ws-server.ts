@@ -2,13 +2,34 @@
 // WebSocket server — one Game + lobby per room id
 // ============================================================
 
+import 'dotenv/config';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Game } from './game/Game.js';
+import { GroqProvider } from './llm/GroqProvider.js';
 import type { GodId } from './types/index.js';
 import mapLayout from './data/map.json';
 
 const PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
 const CLIENT_URL = process.env.CLIENT_URL ?? 'http://localhost:5173';
+
+/** Shared across rooms; agents use Groq when key is set (see backend/.env). */
+function createSharedGroq(): GroqProvider | null {
+  const key = process.env.GROQ_API_KEY?.trim();
+  if (!key || key === 'your_api_key_here' || key === 'your_groq_api_key_here') {
+    return null;
+  }
+  const model = process.env.GROQ_MODEL?.trim() || undefined;
+  console.log('[ws-server] Groq LLM enabled' + (model ? ` (model: ${model})` : ''));
+  return new GroqProvider({
+    apiKey: key,
+    model,
+    maxTokens: parseInt(process.env.GROQ_MAX_TOKENS ?? '150', 10) || 150,
+    temperature: parseFloat(process.env.GROQ_TEMPERATURE ?? '0.85') || 0.85,
+    maxConcurrency: parseInt(process.env.GROQ_MAX_CONCURRENCY ?? '8', 10) || 8,
+  });
+}
+
+const sharedGroq = createSharedGroq();
 
 type RoomId = string;
 
@@ -58,6 +79,9 @@ function createRoom(roomId: RoomId): RoomRuntime {
     ticksPerSecond: 1,
     minGods: 1,
   });
+  if (sharedGroq) {
+    game.setLLM(sharedGroq);
+  }
   const rr: RoomRuntime = { id: roomId, game, players: new Map(), hostId: null };
   game.on({
     onTick: () => broadcastRoom(roomId),
@@ -149,6 +173,9 @@ function getRoomForSocket(ws: WebSocket): RoomRuntime | null {
 
 wss.on('listening', () => {
   console.log(`[ws-server] listening on ws://localhost:${PORT}`);
+  if (!sharedGroq) {
+    console.log('[ws-server] agents: stochastic fallback (set GROQ_API_KEY in backend/.env for Groq)');
+  }
 });
 
 wss.on('connection', (ws) => {
