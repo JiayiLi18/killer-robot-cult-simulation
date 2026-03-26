@@ -15,23 +15,46 @@ import type { CouncilMessage, CouncilResult as CouncilResultType, Nominee } from
 
 const COUNCIL_COOLDOWN_SECS = 60
 
-function LobbyPhase({ onJoin, lobby, actions }: {
-  onJoin: (name: string) => void
+function LobbyPhase({ onJoin, lobby, actions, phase, isLive, wsConnected, currentPlayerId }: {
+  onJoin: (name: string, roomCode?: string) => void
   lobby: NonNullable<import('./types').GameState['lobby']>
   actions: import('./hooks/useGameState').GameActions
+  phase: import('./types').GameState['phase']
+  isLive: boolean
+  wsConnected: boolean
+  currentPlayerId?: string
 }) {
   const [hasJoined, setHasJoined] = useState(false)
+  const [roomDraft, setRoomDraft] = useState(() =>
+    typeof window !== 'undefined'
+      ? (new URLSearchParams(window.location.search).get('room') || 'default')
+      : 'default',
+  )
   const [robotName, setRobotName] = useState('')
   const [robotIdentity, setRobotIdentity] = useState('')
   const [robotLook, setRobotLook] = useState('')
 
-  const lastPlayer = lobby.players[lobby.players.length - 1]
-  const isReady = lastPlayer?.isReady ?? false
+  const currentPlayer = lobby.players.find((player) => player.id === currentPlayerId)
+  const isReady = currentPlayer?.isReady ?? false
+  const isHost = currentPlayer?.isHost ?? false
+  const lobbyReady = currentPlayer?.lobbyReady ?? false
+  const connectedPlayers = lobby.players.filter((p) => p.isConnected)
+  const allLobbyReady =
+    connectedPlayers.length > 0 && connectedPlayers.every((p) => p.lobbyReady)
+  const readyCount = lobby.players.filter((player) => player.isReady).length
+  const canLaunchSimulation =
+    connectedPlayers.length > 0 && connectedPlayers.every((p) => p.isReady)
 
   const handleJoin = (name: string) => {
-    onJoin(name)
+    if (isLive) {
+      onJoin(name, roomDraft)
+    } else {
+      onJoin(name)
+    }
     setHasJoined(true)
   }
+
+  const joinQrUrl = `${window.location.origin}/?live&room=${encodeURIComponent(roomDraft)}`
 
   const handleReady = () => {
     actions.setReady({ robotName, robotIdentity, robotLook })
@@ -39,17 +62,69 @@ function LobbyPhase({ onJoin, lobby, actions }: {
 
   return (
     <div className="min-h-screen flex flex-col items-center p-4 py-8 gap-8 bg-void">
-      {!hasJoined ? (
+      {phase === 'lobby' && !hasJoined ? (
         <div className="flex flex-col md:flex-row items-center gap-8 md:gap-12">
           <img
             src="/Killer-Robot-Cult.png"
             alt="A-Line: Killer Robot Cult"
             className="w-64 md:w-80 rounded-xl shadow-[0_0_40px_rgba(6,182,212,0.15)] border border-gray-800/50"
           />
-          <div className="flex flex-col items-center gap-6">
-            <QRJoin roomCode={lobby.roomCode} qrUrl={lobby.qrUrl} />
+          <div className="flex flex-col items-center gap-6 w-full max-w-xs">
+            {isLive && (
+              <div className="w-full space-y-1">
+                <label className="block text-gray-500 text-xs font-mono uppercase tracking-wider">Room code</label>
+                <input
+                  type="text"
+                  value={roomDraft}
+                  onChange={(e) => setRoomDraft(e.target.value.trim() || 'default')}
+                  maxLength={32}
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-cyan-400"
+                />
+                <p className="text-gray-600 text-xs font-mono">Same code on every tab to play together.</p>
+              </div>
+            )}
+            <QRJoin roomCode={isLive ? roomDraft : lobby.roomCode} qrUrl={isLive ? joinQrUrl : lobby.qrUrl} />
             <JoinForm onJoin={handleJoin} />
           </div>
+        </div>
+      ) : phase === 'lobby' && isLive ? (
+        <div className="w-full max-w-md space-y-4 text-center">
+          <h2 className="text-2xl font-mono font-bold text-white">Room: {lobby.roomCode}</h2>
+          <p className="text-sm text-gray-400 font-mono">
+            {wsConnected ? 'Connected' : 'Connecting…'}
+          </p>
+          <div className="flex flex-col gap-2">
+            {lobbyReady ? (
+              <button
+                type="button"
+                onClick={() => actions.setLobbyReady(false)}
+                className="w-full py-3 bg-gray-800 text-gray-200 border border-gray-600 rounded-lg font-mono font-bold text-sm"
+              >
+                Not ready
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => actions.setLobbyReady(true)}
+                disabled={!wsConnected}
+                className="w-full py-3 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded-lg font-mono font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Ready
+              </button>
+            )}
+          </div>
+          {isHost ? (
+            <button
+              type="button"
+              onClick={() => actions.startGame()}
+              disabled={!allLobbyReady || !wsConnected}
+              className="w-full py-3 bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-lg font-mono font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Start game
+            </button>
+          ) : (
+            <p className="text-sm text-gray-500 font-mono">Waiting for host to start…</p>
+          )}
         </div>
       ) : (
         <>
@@ -78,24 +153,33 @@ function LobbyPhase({ onJoin, lobby, actions }: {
             </div>
             {!isReady ? (
               <button onClick={handleReady}
-                className="w-full py-3 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-lg font-mono font-bold text-sm hover:bg-emerald-500/30 transition-colors">
+                className="w-full py-3 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-lg font-mono font-bold text-sm">
                 Ready
               </button>
             ) : (
               <div className="w-full py-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-center">
-                <span className="text-emerald-400 font-mono font-bold text-sm">Ready — waiting for others...</span>
+                <span className="text-emerald-400 font-mono font-bold text-sm">Ready - waiting for others...</span>
               </div>
+            )}
+            {isLive && isHost && (
+              <button
+                onClick={() => actions.startSimulation()}
+                disabled={!canLaunchSimulation || !wsConnected}
+                className="w-full py-3 bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded-lg font-mono font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Launch Simulation
+              </button>
             )}
           </div>
         </>
       )}
-      <PlayerList players={lobby.players} />
+      <PlayerList players={lobby.players} phase={phase} />
     </div>
   )
 }
 
 export default function App() {
-  const { state, actions, wsConnected } = useGameState()
+  const { state, actions, wsConnected, currentGodId } = useGameState()
   const [councilActive, setCouncilActive] = useState(false)
   const [councilMessages] = useState<CouncilMessage[]>([])
   const [councilResult, setCouncilResult] = useState<CouncilResultType | null>(null)
@@ -171,7 +255,11 @@ export default function App() {
       <LobbyPhase
         lobby={lobby}
         actions={actions}
-        onJoin={(name) => actions.joinRoom(name)}
+        phase={state.phase}
+        isLive={wsConnected !== undefined}
+        wsConnected={wsConnected ?? false}
+        currentPlayerId={currentGodId}
+        onJoin={(name, roomCode) => actions.joinRoom(name, roomCode)}
       />
     )
   }

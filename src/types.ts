@@ -36,6 +36,8 @@ export type Player = {
   isHost: boolean
   isConnected: boolean
   isReady: boolean
+  /** Live lobby: clicked ready before host starts */
+  lobbyReady?: boolean
   robotSetup?: RobotSetup
 }
 

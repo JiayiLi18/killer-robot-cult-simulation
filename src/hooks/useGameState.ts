@@ -25,6 +25,32 @@ function normalizeState(raw: Record<string, unknown>): GameState {
     roomMessages: raw.roomMessages as GameState['roomMessages'],
     voiceOfGod: raw.voiceOfGod as GameState['voiceOfGod'],
     council: raw.council as GameState['council'],
+    lobby: normalizeLobby(raw.lobby),
+  }
+}
+
+function normalizeLobby(raw: unknown): GameState['lobby'] {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  const playersRaw = o.players
+  if (!Array.isArray(playersRaw)) return o as GameState['lobby']
+  const players = playersRaw.map((p) => {
+    const x = p as Record<string, unknown>
+    return {
+      id: String(x.id),
+      name: String(x.name),
+      isHost: Boolean(x.isHost),
+      isConnected: Boolean(x.isConnected),
+      isReady: Boolean(x.isReady),
+      lobbyReady: Boolean(x.lobbyReady),
+    } as Player
+  })
+  return {
+    roomId: String(o.roomId ?? ''),
+    roomCode: String(o.roomCode ?? ''),
+    qrUrl: String(o.qrUrl ?? ''),
+    players,
+    isHost: Boolean(o.isHost),
   }
 }
 
@@ -51,8 +77,10 @@ export interface GameActions {
   appendBeliefs:      (id: string, text: string) => void
   triggerVog:         (message: string) => void
   // God UI lobby actions
-  joinRoom:           (name: string) => void
+  joinRoom:           (name: string, roomCode?: string) => void
   setReady:           (robotSetup: RobotSetup) => void
+  // Live lobby: mark ready before host starts (server-driven)
+  setLobbyReady:      (ready: boolean) => void
   // Backend game control
   startGame:          () => void
   startSimulation:    () => void
@@ -65,7 +93,7 @@ export interface GameActions {
 
 // ─── Mock mode (default) ─────────────────────────────────────────────────────
 
-function useMockState(): { state: GameState; actions: GameActions } {
+function useMockState(enabled: boolean): { state: GameState; actions: GameActions } {
   const [state, setState] = useState<GameState>(() => ({
     ...deepClone(mockState),
     phase: 'lobby' as const,
@@ -81,6 +109,8 @@ function useMockState(): { state: GameState; actions: GameActions } {
   }, [])
 
   useEffect(() => {
+    if (!enabled) return
+
     const countdownTimer = setInterval(() => {
       update(s => {
         if (s.phase !== 'playing') return s
@@ -135,7 +165,7 @@ function useMockState(): { state: GameState; actions: GameActions } {
       clearInterval(cooldownTimer)
       clearInterval(moveTimer)
     }
-  }, [update])
+  }, [enabled, update])
 
   const actions: GameActions = {
     setPhase: phase => update(s => ({ ...s, phase })),
@@ -199,7 +229,9 @@ function useMockState(): { state: GameState; actions: GameActions } {
     voteCouncil:     () => { /* mock: not applicable */ },
 
     // God UI lobby actions
-    joinRoom: (name) => update(s => {
+    setLobbyReady: () => {},
+
+    joinRoom: (name, _roomCode) => update(s => {
       const playerId = `god_${Math.random().toString(36).slice(2, 8)}`
       const player: Player = {
         id: playerId,
@@ -238,54 +270,132 @@ function useMockState(): { state: GameState; actions: GameActions } {
 // ─── WebSocket mode ───────────────────────────────────────────────────────────
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:3001'
-const GOD_ID  = `god_${Math.random().toString(36).slice(2, 8)}`
+const GOD_ID_STORAGE_KEY = 'krc:godId'
 
-function useWsState(): { state: GameState; actions: GameActions; connected: boolean } {
-  const [state, setState] = useState<GameState>(() => deepClone(mockState))
+/** Same tab session = same id after reload; new tab = new id */
+function getOrCreateSessionGodId(): string {
+  try {
+    let id = sessionStorage.getItem(GOD_ID_STORAGE_KEY)
+    if (!id) {
+      id = `god_${Math.random().toString(36).slice(2, 8)}`
+      sessionStorage.setItem(GOD_ID_STORAGE_KEY, id)
+    }
+    return id
+  } catch {
+    return `god_${Math.random().toString(36).slice(2, 8)}`
+  }
+}
+
+function createInitialLiveState(): GameState {
+  return {
+    ...deepClone(mockState),
+    phase: 'lobby',
+    map: [],
+    robots: {},
+    countdown: 0,
+    killersFound: 0,
+    totalKillers: 0,
+    councilCooldown: 0,
+    roomMessages: {},
+    lobby: createInitialLobby(),
+  }
+}
+
+function useWsState(enabled: boolean): { state: GameState; actions: GameActions; connected: boolean; godId: string } {
+  const [state, setState] = useState<GameState>(() => createInitialLiveState())
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const godIdRef = useRef<string | null>(null)
+  if (godIdRef.current === null) {
+    godIdRef.current = typeof window !== 'undefined' ? getOrCreateSessionGodId() : 'god_ssr'
+  }
+  const godId = godIdRef.current
+  const defaultGodName = `God ${godId.slice(-4).toUpperCase()}`
+  const playerNameRef = useRef(defaultGodName)
+  const roomIdRef = useRef<string>(
+    typeof window !== 'undefined'
+      ? (new URLSearchParams(window.location.search).get('room') || 'default')
+      : 'default',
+  )
+  const pendingSendRef = useRef<object[]>([])
 
   const send = useCallback((msg: object) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg))
+    const sock = wsRef.current
+    if (sock?.readyState === WebSocket.OPEN) {
+      sock.send(JSON.stringify(msg))
+      return
     }
+    pendingSendRef.current.push(msg)
   }, [])
 
+  const sendJoin = useCallback((name?: string) => {
+    send({
+      type: 'join',
+      godId,
+      name: name ?? playerNameRef.current,
+      roomId: roomIdRef.current,
+    })
+  }, [send, godId])
+
   useEffect(() => {
-    let ws: WebSocket
-    let reconnectTimeout: ReturnType<typeof setTimeout>
+    if (!enabled) {
+      setConnected(false)
+      wsRef.current = null
+      return
+    }
+
+    let reconnectTimeout: ReturnType<typeof setTimeout> | undefined
+    let ws: WebSocket | undefined
+    let disposed = false
 
     const connect = () => {
+      if (disposed) return
       ws = new WebSocket(WS_URL)
       wsRef.current = ws
 
       ws.onopen = () => {
+        if (disposed) return
         setConnected(true)
-        ws.send(JSON.stringify({ type: 'join', godId: GOD_ID }))
+        const openSocket = wsRef.current
+        if (!openSocket) return
+        const backlog = pendingSendRef.current.splice(0)
+        for (const m of backlog) {
+          try {
+            openSocket.send(JSON.stringify(m))
+          } catch {
+            /* ignore */
+          }
+        }
       }
 
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data)
         if (msg.type === 'state') {
           setState(normalizeState(msg.data))
+        } else if (msg.type === 'error' && import.meta.env.DEV) {
+          console.warn('[ws]', (msg as { error?: string }).error)
         }
       }
 
       ws.onerror = () => { /* close handler will reconnect */ }
 
       ws.onclose = () => {
-        setConnected(false)
         wsRef.current = null
+        setConnected(false)
+        if (disposed) return
         reconnectTimeout = setTimeout(connect, 3000)
       }
     }
 
     connect()
     return () => {
-      clearTimeout(reconnectTimeout)
+      disposed = true
+      pendingSendRef.current = []
+      if (reconnectTimeout !== undefined) clearTimeout(reconnectTimeout)
       ws?.close()
+      wsRef.current = null
     }
-  }, [])
+  }, [enabled])
 
   const actions: GameActions = {
     setPhase:           () => { /* server controls phase */ },
@@ -295,36 +405,51 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
     updateRobot:        () => { /* server controls */ },
     removeRobot:        () => { /* server controls */ },
     moveRobot:          () => { /* server controls movement */ },
-    appendBeliefs: (id, text) => send({ type: 'whisper', godId: GOD_ID, targetRobotId: id, words: text }),
-    triggerVog:    (message)  => send({ type: 'submitVog', godId: GOD_ID, words: message }),
-    joinRoom:      ()         => { /* auto-joined on WS connect */ },
+    appendBeliefs: (id, text) => send({ type: 'whisper', godId, targetRobotId: id, words: text }),
+    triggerVog:    (message)  => send({ type: 'submitVog', godId, words: message }),
+    joinRoom:      (name, roomCode) => {
+      if (roomCode !== undefined) {
+        const code = roomCode.trim() || 'default'
+        roomIdRef.current = code
+        if (typeof window !== 'undefined') {
+          const u = new URL(window.location.href)
+          u.searchParams.set('room', code)
+          window.history.replaceState(null, '', u.toString())
+        }
+      }
+      playerNameRef.current = name.trim() || defaultGodName
+      sendJoin(playerNameRef.current)
+    },
+    setLobbyReady: (ready) => {
+      send({ type: 'lobbyReady', godId, ready })
+    },
     setReady:      (setup)    => {
-      send({ type: 'defineRobot', godId: GOD_ID, name: setup.robotName, look: setup.robotLook, identity: setup.robotIdentity })
+      send({ type: 'defineRobot', godId, name: setup.robotName, look: setup.robotLook, identity: setup.robotIdentity })
     },
     // Backend game control
-    startGame:       ()                          => send({ type: 'startGame', godId: GOD_ID }),
-    startSimulation: ()                          => send({ type: 'startSimulation', godId: GOD_ID }),
-    defineRobot:     (name, look, identity, imageUrl) => send({ type: 'defineRobot', godId: GOD_ID, name, look, identity, imageUrl }),
+    startGame:       ()                          => send({ type: 'startGame', godId }),
+    startSimulation: ()                          => send({ type: 'startSimulation', godId }),
+    defineRobot:     (name, look, identity, imageUrl) => send({ type: 'defineRobot', godId, name, look, identity, imageUrl }),
     // VoG & council voting
-    submitVog:       (words)          => send({ type: 'submitVog', godId: GOD_ID, words }),
-    voteVog:         (forGodId)       => send({ type: 'voteVog', godId: GOD_ID, forGodId }),
-    voteCouncil:     (targetRobotId)  => send({ type: 'voteCouncil', godId: GOD_ID, targetAgentId: targetRobotId }),
+    submitVog:       (words)          => send({ type: 'submitVog', godId, words }),
+    voteVog:         (forGodId)       => send({ type: 'voteVog', godId, forGodId }),
+    voteCouncil:     (targetRobotId)  => send({ type: 'voteCouncil', godId, targetAgentId: targetRobotId }),
   }
 
-  return { state, actions, connected }
+  return { state, actions, connected, godId }
 }
 
-// ─── Auto-select mode based on VITE_WS_URL env var or ?live param ─────────────
+// ─── Live server: opt in with ?live or VITE_WS_URL (otherwise mock, no WebSocket) ─
 
-export function useGameState(): { state: GameState; actions: GameActions; wsConnected?: boolean } {
+export function useGameState(): { state: GameState; actions: GameActions; wsConnected?: boolean; currentGodId?: string } {
   const useLive = typeof window !== 'undefined'
     && (new URLSearchParams(window.location.search).has('live')
-        || import.meta.env.VITE_WS_URL)
+      || Boolean(import.meta.env.VITE_WS_URL))
 
   // Always call both hooks (Rules of Hooks); only expose the active one
-  const mock = useMockState()
-  const ws   = useWsState()
+  const mock = useMockState(!useLive)
+  const ws   = useWsState(useLive)
 
-  if (useLive) return { state: ws.state, actions: ws.actions, wsConnected: ws.connected }
+  if (useLive) return { state: ws.state, actions: ws.actions, wsConnected: ws.connected, currentGodId: ws.godId }
   return { state: mock.state, actions: mock.actions }
 }
