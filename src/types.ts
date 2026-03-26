@@ -48,6 +48,18 @@ export type GameState = {
   totalKillers: number
   councilCooldown: number
   roomMessages?: Record<string, RoomMessage[]>
+  // Backend-provided VoG round state
+  voiceOfGod?: {
+    selectedGods: string[]
+    submissions: { godId: string; words: string; tick: number }[]
+    phase: 'submission' | 'voting' | 'done'
+    winnerWords?: string
+  }
+  // Backend-provided council state
+  council?: {
+    messages: { agentId: string; message: string; tick: number }[]
+    votes: Record<string, string>
+  }
   // God UI lobby state (client-only, managed by god-ui layer)
   lobby?: LobbyState
 }

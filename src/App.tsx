@@ -8,6 +8,9 @@ import { EndingScreen } from './god-ui/components/EndingScreen'
 import { QRJoin } from './god-ui/components/Lobby/QRJoin'
 import { JoinForm } from './god-ui/components/Lobby/JoinForm'
 import { PlayerList } from './god-ui/components/Lobby/PlayerList'
+import { VoGInput } from './god-ui/components/VoiceOfGod/VoGInput'
+import { VoGVoting } from './god-ui/components/VoiceOfGod/VoGVoting'
+import { VoGAnnounce } from './god-ui/components/VoiceOfGod/VoGAnnounce'
 import type { CouncilMessage, CouncilResult as CouncilResultType, Nominee } from './god-ui/types/godUI'
 
 const COUNCIL_COOLDOWN_SECS = 60
@@ -98,6 +101,9 @@ export default function App() {
   const [councilResult, setCouncilResult] = useState<CouncilResultType | null>(null)
   const [councilVote, setCouncilVote] = useState<string | undefined>()
 
+  const [vogSubmission, setVogSubmission] = useState<string | undefined>()
+  const [vogVote, setVogVote] = useState<string | undefined>()
+
   const startCouncil = () => {
     if (state.councilCooldown > 0) return
     actions.setPhase('council')
@@ -113,9 +119,48 @@ export default function App() {
     actions.setCouncilCooldown(COUNCIL_COOLDOWN_SECS)
   }
 
+  // Build nominees from backend council votes or from alive robots
   const nominees: Nominee[] = Object.values(state.robots)
     .filter(r => r.status === 'alive')
-    .map(r => ({ robotId: r.id, robotName: r.name, votes: 0 }))
+    .map(r => {
+      const voteCount = state.council
+        ? Object.values(state.council.votes).filter(v => v === r.id).length
+        : 0
+      return { robotId: r.id, robotName: r.name, votes: voteCount }
+    })
+
+  // Convert backend council messages to UI format
+  const backendCouncilMessages: CouncilMessage[] = (state.council?.messages ?? []).map(m => ({
+    agentId: m.agentId,
+    message: m.message,
+    timestamp: m.tick,
+  }))
+
+  // Council phase — full-screen overlay (check before other routing)
+  if (state.phase === 'council' || councilActive) {
+    if (councilResult) {
+      return (
+        <CouncilResult
+          result={councilResult}
+          robots={state.robots}
+          onContinue={endCouncil}
+        />
+      )
+    }
+    const msgs = backendCouncilMessages.length > 0 ? backendCouncilMessages : councilMessages
+    return (
+      <CouncilChat
+        messages={msgs}
+        nominees={nominees}
+        myVote={councilVote}
+        robots={state.robots}
+        onVote={(robotId) => {
+          setCouncilVote(robotId)
+          actions.voteCouncil(robotId)
+        }}
+      />
+    )
+  }
 
   // Phase routing
   if (state.phase === 'lobby' || state.phase === 'setup') {
@@ -141,27 +186,7 @@ export default function App() {
     )
   }
 
-  // Council phase — our full-screen overlay
-  if (councilActive && state.phase === 'council') {
-    if (councilResult) {
-      return (
-        <CouncilResult
-          result={councilResult}
-          robots={state.robots}
-          onContinue={endCouncil}
-        />
-      )
-    }
-    return (
-      <CouncilChat
-        messages={councilMessages}
-        nominees={nominees}
-        myVote={councilVote}
-        robots={state.robots}
-        onVote={(robotId) => setCouncilVote(robotId)}
-      />
-    )
-  }
+  const vog = state.voiceOfGod
 
   // Playing / VoG — partner's game world
   return (
@@ -170,6 +195,31 @@ export default function App() {
         <GameWorldScreen state={state} actions={actions} />
         <DevPanel state={state} actions={actions} onStartCouncil={startCouncil} />
       </div>
+
+      {/* VoG overlays — driven by backend state */}
+      {vog?.phase === 'submission' && (
+        <VoGInput
+          isEligible={vog.selectedGods.length > 0}
+          mySubmission={vogSubmission}
+          onSubmit={(words) => {
+            setVogSubmission(words)
+            actions.submitVog(words)
+          }}
+        />
+      )}
+      {vog?.phase === 'voting' && (
+        <VoGVoting
+          submissions={vog.submissions}
+          myVote={vogVote}
+          onVote={(godId) => {
+            setVogVote(godId)
+            actions.voteVog(godId)
+          }}
+        />
+      )}
+      {vog?.phase === 'done' && vog.winnerWords && (
+        <VoGAnnounce announcement={vog.winnerWords} />
+      )}
 
       {/* WS connection indicator (live mode only) */}
       {wsConnected !== undefined && (

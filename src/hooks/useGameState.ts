@@ -23,6 +23,8 @@ function normalizeState(raw: Record<string, unknown>): GameState {
     totalKillers: raw.totalKillers as number,
     councilCooldown: raw.councilCooldown as number,
     roomMessages: raw.roomMessages as GameState['roomMessages'],
+    voiceOfGod: raw.voiceOfGod as GameState['voiceOfGod'],
+    council: raw.council as GameState['council'],
   }
 }
 
@@ -51,6 +53,14 @@ export interface GameActions {
   // God UI lobby actions
   joinRoom:           (name: string) => void
   setReady:           (robotSetup: RobotSetup) => void
+  // Backend game control
+  startGame:          () => void
+  startSimulation:    () => void
+  defineRobot:        (name: string, look: string, identity: string, imageUrl?: string) => void
+  // VoG & council voting
+  submitVog:          (words: string) => void
+  voteVog:            (forGodId: string) => void
+  voteCouncil:        (targetRobotId: string) => void
 }
 
 // ─── Mock mode (default) ─────────────────────────────────────────────────────
@@ -180,6 +190,14 @@ function useMockState(): { state: GameState; actions: GameActions } {
       })
     },
 
+    // Backend game control (no-ops in mock mode)
+    startGame:       () => { /* mock: auto-started */ },
+    startSimulation: () => { /* mock: auto-started */ },
+    defineRobot:     () => { /* mock: use addRobot instead */ },
+    submitVog:       () => { /* mock: use triggerVog instead */ },
+    voteVog:         () => { /* mock: not applicable */ },
+    voteCouncil:     () => { /* mock: not applicable */ },
+
     // God UI lobby actions
     joinRoom: (name) => update(s => {
       const playerId = `god_${Math.random().toString(36).slice(2, 8)}`
@@ -273,14 +291,24 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
     setPhase:           () => { /* server controls phase */ },
     setCountdown:       () => { /* server controls countdown */ },
     setCouncilCooldown: () => { /* server controls cooldown */ },
-    addRobot:           () => { /* use server API */ },
-    updateRobot:        () => { /* use server API */ },
-    removeRobot:        () => { /* use server API */ },
+    addRobot:           () => { /* use defineRobot instead */ },
+    updateRobot:        () => { /* server controls */ },
+    removeRobot:        () => { /* server controls */ },
     moveRobot:          () => { /* server controls movement */ },
     appendBeliefs: (id, text) => send({ type: 'whisper', godId: GOD_ID, targetRobotId: id, words: text }),
     triggerVog:    (message)  => send({ type: 'submitVog', godId: GOD_ID, words: message }),
     joinRoom:      ()         => { /* auto-joined on WS connect */ },
-    setReady:      ()         => { /* server controls game start */ },
+    setReady:      (setup)    => {
+      send({ type: 'defineRobot', godId: GOD_ID, name: setup.robotName, look: setup.robotLook, identity: setup.robotIdentity })
+    },
+    // Backend game control
+    startGame:       ()                          => send({ type: 'startGame', godId: GOD_ID }),
+    startSimulation: ()                          => send({ type: 'startSimulation', godId: GOD_ID }),
+    defineRobot:     (name, look, identity, imageUrl) => send({ type: 'defineRobot', godId: GOD_ID, name, look, identity, imageUrl }),
+    // VoG & council voting
+    submitVog:       (words)          => send({ type: 'submitVog', godId: GOD_ID, words }),
+    voteVog:         (forGodId)       => send({ type: 'voteVog', godId: GOD_ID, forGodId }),
+    voteCouncil:     (targetRobotId)  => send({ type: 'voteCouncil', godId: GOD_ID, targetAgentId: targetRobotId }),
   }
 
   return { state, actions, connected }
