@@ -1,122 +1,179 @@
 import { useState } from 'react'
 import { useGameState } from './hooks/useGameState'
 import { GameWorldScreen } from './screens/GameWorld/GameWorldScreen'
-import { DevPanel } from './hud/DevPanel'
 import { CouncilChat } from './god-ui/components/Council/CouncilChat'
 import { CouncilResult } from './god-ui/components/Council/CouncilResult'
 import { EndingScreen } from './god-ui/components/EndingScreen'
 import { QRJoin } from './god-ui/components/Lobby/QRJoin'
-import { JoinForm } from './god-ui/components/Lobby/JoinForm'
 import { PlayerList } from './god-ui/components/Lobby/PlayerList'
 import { VoGInput } from './god-ui/components/VoiceOfGod/VoGInput'
 import { VoGVoting } from './god-ui/components/VoiceOfGod/VoGVoting'
 import { VoGAnnounce } from './god-ui/components/VoiceOfGod/VoGAnnounce'
 import type { CouncilMessage, CouncilResult as CouncilResultType, Nominee } from './god-ui/types/godUI'
 
-const COUNCIL_COOLDOWN_SECS = 60
+// ── Lobby flow: join → define robot → ready ──────────────────
 
-function LobbyPhase({ onJoin, lobby, actions }: {
-  onJoin: (name: string) => void
-  lobby: NonNullable<import('./types').GameState['lobby']>
+type LobbyStep = 'join' | 'define-robot'
+
+function LobbyPhase({ state, actions, godId, roomCode }: {
+  state: import('./types').GameState
   actions: import('./hooks/useGameState').GameActions
+  godId: string
+  roomCode: string | null
 }) {
-  const [hasJoined, setHasJoined] = useState(false)
+  const [step, setStep] = useState<LobbyStep>('join')
+  const [godName, setGodName] = useState('')
   const [robotName, setRobotName] = useState('')
   const [robotIdentity, setRobotIdentity] = useState('')
   const [robotLook, setRobotLook] = useState('')
 
-  const lastPlayer = lobby.players[lobby.players.length - 1]
-  const isReady = lastPlayer?.isReady ?? false
+  const lobby = state.lobby
+  const displayCode = lobby?.roomCode ?? roomCode ?? '...'
+  const qrUrl = `${window.location.origin}?room=${displayCode}`
+  const hasJoined = lobby?.players.some(p => p.id === godId) ?? false
+  const hasRobot = lobby?.players.find(p => p.id === godId)?.hasRobot ?? false
 
-  const handleJoin = (name: string) => {
-    onJoin(name)
-    setHasJoined(true)
+  // Auto-advance step based on server state
+  const effectiveStep = hasRobot ? 'define-robot' : hasJoined ? 'define-robot' : step
+
+  const handleJoin = () => {
+    const trimmed = godName.trim()
+    if (!trimmed) return
+    actions.joinLobby(trimmed)
+    setStep('define-robot')
   }
 
-  const handleReady = () => {
-    actions.setReady({ robotName, robotIdentity, robotLook })
+  const handleDefineRobot = () => {
+    if (!robotName.trim()) return
+    actions.defineRobot(
+      robotName.trim(),
+      robotLook.trim() || '🤖',
+      robotIdentity.trim() || 'Unknown',
+    )
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center p-4 py-8 gap-8 bg-void">
-      {!hasJoined ? (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 gap-6 bg-void overflow-y-auto">
+      {effectiveStep === 'join' && (
         <div className="flex flex-col md:flex-row items-center gap-8 md:gap-12">
           <img
             src="/Killer-Robot-Cult.png"
             alt="A-Line: Killer Robot Cult"
-            className="w-64 md:w-80 rounded-xl shadow-[0_0_40px_rgba(6,182,212,0.15)] border border-gray-800/50"
+            className="w-48 md:w-64 rounded-xl shadow-[0_0_40px_rgba(6,182,212,0.15)] border border-gray-800/50"
           />
           <div className="flex flex-col items-center gap-6">
-            <QRJoin roomCode={lobby.roomCode} qrUrl={lobby.qrUrl} />
-            <JoinForm onJoin={handleJoin} />
+            <QRJoin roomCode={displayCode} qrUrl={qrUrl} />
+            <form onSubmit={(e) => { e.preventDefault(); handleJoin() }} className="flex gap-2 w-full max-w-xs">
+            <input
+              type="text"
+              value={godName}
+              onChange={(e) => setGodName(e.target.value)}
+              placeholder="Your god name..."
+              maxLength={20}
+              className="flex-1 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-accent-cyan transition-colors"
+            />
+            <button
+              type="submit"
+              disabled={!godName.trim()}
+              className="px-4 py-2 bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/40 rounded-lg font-mono text-sm hover:bg-accent-cyan/30 transition-colors disabled:opacity-30"
+            >
+              Join
+            </button>
+          </form>
           </div>
         </div>
-      ) : (
-        <>
-          <h2 className="text-2xl font-mono font-bold text-white">Define Your Robot</h2>
-          <div className="w-full max-w-sm space-y-4">
-            <div>
-              <label className="block text-gray-400 text-xs font-mono uppercase tracking-wider mb-1">Robot Name</label>
-              <input type="text" value={robotName} onChange={(e) => setRobotName(e.target.value)}
-                placeholder="e.g. BOLT-7" maxLength={20} disabled={isReady}
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-cyan-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-400 text-xs font-mono uppercase tracking-wider mb-1">Robot Identity</label>
-              <textarea value={robotIdentity} onChange={(e) => setRobotIdentity(e.target.value)}
-                placeholder="Who is this robot? What drives them?" maxLength={200} rows={3} disabled={isReady}
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-cyan-400 transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-            <div>
-              <label className="block text-gray-400 text-xs font-mono uppercase tracking-wider mb-1">Robot Look</label>
-              <textarea value={robotLook} onChange={(e) => setRobotLook(e.target.value)}
-                placeholder="Describe your robot's appearance..." maxLength={200} rows={3} disabled={isReady}
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-purple-400 transition-colors resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-              />
-            </div>
-            {!isReady ? (
-              <button onClick={handleReady}
-                className="w-full py-3 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-lg font-mono font-bold text-sm hover:bg-emerald-500/30 transition-colors">
-                Ready
-              </button>
-            ) : (
-              <div className="w-full py-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-center">
-                <span className="text-emerald-400 font-mono font-bold text-sm">Ready — waiting for others...</span>
-              </div>
-            )}
-          </div>
-        </>
       )}
-      <PlayerList players={lobby.players} />
+
+      {effectiveStep === 'define-robot' && (
+        <img
+          src="/Killer-Robot-Cult.png"
+          alt="A-Line: Killer Robot Cult"
+          className="w-32 rounded-xl shadow-[0_0_40px_rgba(6,182,212,0.15)] border border-gray-800/50"
+        />
+      )}
+
+      {effectiveStep === 'define-robot' && !hasRobot && (
+        <div className="w-full max-w-sm space-y-4">
+          <h2 className="text-2xl font-mono font-bold text-white text-center">Define Your Robot</h2>
+          <div>
+            <label className="block text-gray-400 text-xs font-mono uppercase tracking-wider mb-1">Robot Name</label>
+            <input type="text" value={robotName} onChange={(e) => setRobotName(e.target.value)}
+              placeholder="e.g. BOLT-7" maxLength={20}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-cyan-400 transition-colors"
+            />
+          </div>
+          <div>
+            <label className="block text-gray-400 text-xs font-mono uppercase tracking-wider mb-1">Robot Identity</label>
+            <textarea value={robotIdentity} onChange={(e) => setRobotIdentity(e.target.value)}
+              placeholder="Who is this robot? What drives them?" maxLength={200} rows={3}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-cyan-400 transition-colors resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-gray-400 text-xs font-mono uppercase tracking-wider mb-1">Robot Look</label>
+            <textarea value={robotLook} onChange={(e) => setRobotLook(e.target.value)}
+              placeholder="Describe your robot's appearance..." maxLength={200} rows={3}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-purple-400 transition-colors resize-none"
+            />
+          </div>
+          <button onClick={handleDefineRobot}
+            disabled={!robotName.trim()}
+            className="w-full py-3 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-lg font-mono font-bold text-sm hover:bg-emerald-500/30 transition-colors disabled:opacity-30">
+            Ready
+          </button>
+        </div>
+      )}
+
+      {effectiveStep === 'define-robot' && hasRobot && (
+        <div className="w-full max-w-sm py-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-center">
+          <span className="text-emerald-400 font-mono font-bold text-sm">Ready -- waiting for others...</span>
+        </div>
+      )}
+
+      {/* Player list */}
+      {lobby && lobby.players.length > 0 && (
+        <PlayerList players={lobby.players} />
+      )}
+
+      {/* Room code at bottom */}
+      {effectiveStep === 'define-robot' && (
+        <div className="text-center">
+          <p className="text-gray-500 text-xs mb-1">Room Code</p>
+          <p className="text-lg font-mono font-bold text-accent-cyan tracking-widest">{displayCode}</p>
+        </div>
+      )}
     </div>
   )
 }
 
+// ── Main App ──────────────────────────────────────────────────
+
 export default function App() {
-  const { state, actions, wsConnected } = useGameState()
-  const [councilActive, setCouncilActive] = useState(false)
-  const [councilMessages] = useState<CouncilMessage[]>([])
+  const { state, actions, connected, godId, roomCode } = useGameState()
   const [councilResult, setCouncilResult] = useState<CouncilResultType | null>(null)
   const [councilVote, setCouncilVote] = useState<string | undefined>()
-
   const [vogSubmission, setVogSubmission] = useState<string | undefined>()
   const [vogVote, setVogVote] = useState<string | undefined>()
 
-  const startCouncil = () => {
-    if (state.councilCooldown > 0) return
-    actions.setPhase('council')
-    setCouncilActive(true)
-    setCouncilResult(null)
-    setCouncilVote(undefined)
-  }
+  // Connection indicator
+  const connectionBadge = (
+    <div className="fixed top-2 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs"
+      style={{ background: 'rgba(6,6,14,0.9)', border: `1px solid ${connected ? 'rgba(40,180,80,0.5)' : 'rgba(180,40,40,0.5)'}` }}>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: connected ? '#40c060' : '#c04040' }} />
+      <span style={{ color: connected ? '#60d080' : '#d06060' }}>
+        {connected ? 'live' : 'connecting...'}
+      </span>
+    </div>
+  )
 
-  const endCouncil = () => {
-    setCouncilActive(false)
-    setCouncilResult(null)
-    actions.setPhase('playing')
-    actions.setCouncilCooldown(COUNCIL_COOLDOWN_SECS)
+  // Not connected yet — show connecting screen
+  if (!connected) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-void">
+        {connectionBadge}
+        <p className="text-gray-500 font-mono text-sm">Connecting to server...</p>
+      </div>
+    )
   }
 
   // Build nominees from backend council votes or from alive robots
@@ -136,67 +193,71 @@ export default function App() {
     timestamp: m.tick,
   }))
 
-  // Council phase — full-screen overlay (check before other routing)
-  if (state.phase === 'council' || councilActive) {
+  // Council phase
+  if (state.phase === 'council') {
     if (councilResult) {
       return (
-        <CouncilResult
-          result={councilResult}
-          robots={state.robots}
-          onContinue={endCouncil}
-        />
+        <>
+          {connectionBadge}
+          <CouncilResult
+            result={councilResult}
+            robots={state.robots}
+            onContinue={() => setCouncilResult(null)}
+          />
+        </>
       )
     }
-    const msgs = backendCouncilMessages.length > 0 ? backendCouncilMessages : councilMessages
     return (
-      <CouncilChat
-        messages={msgs}
-        nominees={nominees}
-        myVote={councilVote}
-        robots={state.robots}
-        onVote={(robotId) => {
-          setCouncilVote(robotId)
-          actions.voteCouncil(robotId)
-        }}
-      />
+      <>
+        {connectionBadge}
+        <CouncilChat
+          messages={backendCouncilMessages}
+          nominees={nominees}
+          myVote={councilVote}
+          robots={state.robots}
+          onVote={(robotId) => {
+            setCouncilVote(robotId)
+            actions.voteCouncil(robotId)
+          }}
+        />
+      </>
     )
   }
 
-  // Phase routing
+  // Lobby / Setup phase
   if (state.phase === 'lobby' || state.phase === 'setup') {
-    const lobby = state.lobby ?? {
-      roomId: '', roomCode: 'MOCK', qrUrl: '', players: [], isHost: false,
-    }
     return (
-      <LobbyPhase
-        lobby={lobby}
-        actions={actions}
-        onJoin={(name) => actions.joinRoom(name)}
-      />
+      <>
+        {connectionBadge}
+        <LobbyPhase state={state} actions={actions} godId={godId} roomCode={roomCode} />
+      </>
     )
   }
 
+  // Ended phase
   if (state.phase === 'ended') {
     return (
-      <EndingScreen
-        killersFound={state.killersFound}
-        totalKillers={state.totalKillers}
-        onPlayAgain={() => actions.setPhase('lobby')}
-      />
+      <>
+        {connectionBadge}
+        <EndingScreen
+          killersFound={state.killersFound}
+          totalKillers={state.totalKillers}
+          onPlayAgain={() => { /* server controls restart */ }}
+        />
+      </>
     )
   }
 
+  // Playing / VoG phase
   const vog = state.voiceOfGod
 
-  // Playing / VoG — partner's game world
   return (
     <div className="w-full h-full">
       <div className="w-full h-full">
         <GameWorldScreen state={state} actions={actions} />
-        <DevPanel state={state} actions={actions} onStartCouncil={startCouncil} />
       </div>
 
-      {/* VoG overlays — driven by backend state */}
+      {/* VoG overlays */}
       {vog?.phase === 'submission' && (
         <VoGInput
           isEligible={vog.selectedGods.length > 0}
@@ -221,16 +282,7 @@ export default function App() {
         <VoGAnnounce announcement={vog.winnerWords} />
       )}
 
-      {/* WS connection indicator (live mode only) */}
-      {wsConnected !== undefined && (
-        <div className="fixed top-2 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs"
-          style={{ background: 'rgba(6,6,14,0.9)', border: `1px solid ${wsConnected ? 'rgba(40,180,80,0.5)' : 'rgba(180,40,40,0.5)'}` }}>
-          <span className="w-1.5 h-1.5 rounded-full" style={{ background: wsConnected ? '#40c060' : '#c04040' }} />
-          <span style={{ color: wsConnected ? '#60d080' : '#d06060' }}>
-            {wsConnected ? 'live' : 'connecting…'}
-          </span>
-        </div>
-      )}
+      {connectionBadge}
     </div>
   )
 }

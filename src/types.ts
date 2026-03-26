@@ -33,10 +33,8 @@ export type RobotSetup = {
 export type Player = {
   id: string
   name: string
-  isHost: boolean
+  hasRobot: boolean
   isConnected: boolean
-  isReady: boolean
-  robotSetup?: RobotSetup
 }
 
 export type GameState = {
@@ -60,14 +58,11 @@ export type GameState = {
     messages: { agentId: string; message: string; tick: number }[]
     votes: Record<string, string>
   }
-  // God UI lobby state (client-only, managed by god-ui layer)
+  // Server-provided lobby state
   lobby?: LobbyState
 }
 
 export type LobbyState = {
-  roomId: string
   roomCode: string
-  qrUrl: string
   players: Player[]
-  isHost: boolean
 }

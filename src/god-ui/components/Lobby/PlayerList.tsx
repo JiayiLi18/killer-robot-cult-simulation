@@ -5,7 +5,7 @@ interface PlayerListProps {
 }
 
 export function PlayerList({ players }: PlayerListProps) {
-  const readyCount = players.filter((p) => p.isReady).length
+  const readyCount = players.filter((p) => p.hasRobot).length
 
   return (
     <div className="w-full max-w-2xl">
@@ -20,22 +20,22 @@ export function PlayerList({ players }: PlayerListProps) {
 
       {players.length > 0 ? (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 max-h-80 overflow-y-auto pr-1">
-          {players.map((player) => (
+          {players.map((player, i) => (
             <div
               key={player.id}
               className={`flex flex-col items-center gap-1 px-2 py-2 rounded-lg border transition-colors ${
-                player.isReady
+                player.hasRobot
                   ? 'bg-emerald-500/10 border-emerald-500/30'
                   : 'bg-surface border-gray-800'
               }`}
             >
               <div className="relative">
                 <div className={`w-9 h-9 rounded-full flex items-center justify-center font-mono font-bold text-sm ${
-                  player.isReady
+                  player.hasRobot
                     ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400'
                     : 'bg-accent-purple/20 border border-accent-purple/40 text-accent-purple'
                 }`}>
-                  {player.isReady ? (
+                  {player.hasRobot ? (
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="3,8 7,12 13,4" />
                     </svg>
@@ -52,7 +52,7 @@ export function PlayerList({ players }: PlayerListProps) {
               <span className="font-mono text-xs text-white truncate w-full text-center">
                 {player.name}
               </span>
-              {player.isHost && (
+              {i === 0 && (
                 <span className="text-yellow-400 text-[10px] leading-none" title="Host">&#9819;</span>
               )}
             </div>

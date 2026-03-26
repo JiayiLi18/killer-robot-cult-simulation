@@ -8,14 +8,22 @@ import type { GodId } from './types/index.js';
 import mapLayout from './data/map.json';
 
 const PORT = parseInt(process.env.WS_PORT ?? '3001', 10);
+const ROOM_CODE = Math.random().toString(36).slice(2, 8).toUpperCase();
 
 const game = new Game({
   ticksPerSecond: 1,
   minGods: 1,
 });
 
-// Track connected gods
-const clients = new Map<WebSocket, GodId>();
+// Track connected clients and their metadata
+interface GodInfo {
+  ws: WebSocket;
+  godId: GodId;
+  name: string;
+  hasRobot: boolean;
+}
+
+const clients = new Map<WebSocket, GodInfo>();
 
 // ── Game event hooks ─────────────────────────────────────────
 
@@ -40,16 +48,45 @@ game.on({
   },
 });
 
+// ── Build lobby state for broadcasts ─────────────────────────
+
+function getLobbyState() {
+  const players: { id: string; name: string; hasRobot: boolean; isConnected: boolean }[] = [];
+  for (const info of clients.values()) {
+    players.push({
+      id: info.godId,
+      name: info.name,
+      hasRobot: info.hasRobot,
+      isConnected: info.ws.readyState === WebSocket.OPEN,
+    });
+  }
+  return { roomCode: ROOM_CODE, players };
+}
+
 // ── Broadcast state to all connected clients ─────────────────
 
 function broadcast() {
   const state = game.getState();
-  const msg = JSON.stringify({ type: 'state', data: state });
+  const lobby = getLobbyState();
+  const msg = JSON.stringify({ type: 'state', data: { ...state, lobby } });
   for (const [ws] of clients) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(msg);
     }
   }
+}
+
+// ── Auto-start when all gods have defined robots ─────────────
+
+function tryAutoStart() {
+  if (game.getPhase() !== 'setup') return;
+  const gods = Array.from(clients.values());
+  if (gods.length < 1) return;
+  if (!gods.every(g => g.hasRobot)) return;
+
+  console.log(`[ws-server] all ${gods.length} gods ready — starting simulation`);
+  game.startSimulation();
+  broadcast();
 }
 
 // ── WebSocket server ─────────────────────────────────────────
@@ -58,10 +95,14 @@ const wss = new WebSocketServer({ port: PORT });
 
 wss.on('listening', () => {
   console.log(`[ws-server] listening on ws://localhost:${PORT}`);
+  console.log(`[ws-server] room code: ${ROOM_CODE}`);
 });
 
 wss.on('connection', (ws) => {
   console.log('[ws-server] client connected');
+
+  // Send room code immediately so client can display it before joining
+  ws.send(JSON.stringify({ type: 'roomInfo', roomCode: ROOM_CODE }));
 
   ws.on('message', (raw) => {
     let msg: Record<string, unknown>;
@@ -78,20 +119,29 @@ wss.on('connection', (ws) => {
     switch (type) {
       case 'join': {
         if (!godId) { sendError(ws, 'godId required'); return; }
-        clients.set(ws, godId);
+        const name = (msg.name as string) || godId;
+        clients.set(ws, { ws, godId, name, hasRobot: false });
         const result = game.joinGame(godId);
         if (!result.success) {
-          console.log(`[ws-server] join failed for ${godId}: ${result.error}`);
+          console.log(`[ws-server] join failed for ${name} (${godId}): ${result.error}`);
         } else {
-          console.log(`[ws-server] ${godId} joined`);
+          console.log(`[ws-server] ${name} (${godId}) joined`);
         }
-        // Send current state immediately
-        ws.send(JSON.stringify({ type: 'state', data: game.getState() }));
+        broadcast();
         break;
       }
 
       case 'defineRobot': {
         if (!godId) { sendError(ws, 'godId required'); return; }
+        // Must start game (transition to setup) before defining robots
+        if (game.getPhase() === 'lobby') {
+          const startResult = game.startGame(mapLayout);
+          if (!startResult.success) {
+            sendError(ws, startResult.error ?? 'Cannot start game');
+            return;
+          }
+          console.log('[ws-server] game started (setup phase)');
+        }
         const result = game.defineRobot(
           godId,
           msg.name as string,
@@ -100,7 +150,12 @@ wss.on('connection', (ws) => {
           msg.imageUrl as string | undefined,
         );
         ws.send(JSON.stringify({ type: 'defineRobot', ...result }));
-        if (result.success) broadcast();
+        if (result.success) {
+          const info = clients.get(ws);
+          if (info) info.hasRobot = true;
+          broadcast();
+          tryAutoStart();
+        }
         break;
       }
 
@@ -152,9 +207,9 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    const godId = clients.get(ws);
-    if (godId) {
-      console.log(`[ws-server] ${godId} disconnected`);
+    const info = clients.get(ws);
+    if (info) {
+      console.log(`[ws-server] ${info.name} (${info.godId}) disconnected`);
       clients.delete(ws);
     }
   });

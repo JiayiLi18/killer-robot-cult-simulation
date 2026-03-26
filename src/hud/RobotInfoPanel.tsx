@@ -26,7 +26,7 @@ export function RobotInfoPanel({ robot, roomName, actions, onClose }: Props) {
   const [recentWhispers, setRecentWhispers] = useState<WhisperEntry[]>([])
 
   const submitWhisper = (words: string) => {
-    actions.appendBeliefs(robot.id, words)
+    actions.whisper(robot.id, words)
     setRecentWhispers(prev => [{ words, timestamp: Date.now() }, ...prev].slice(0, 10))
     setWhispering(false)
   }

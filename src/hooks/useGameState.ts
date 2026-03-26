@@ -1,15 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { GameState, Robot, RoomData, Player, RobotSetup, LobbyState } from '../types'
-import { mockState } from '../mockState'
-
-function deepClone<T>(obj: T): T { return JSON.parse(JSON.stringify(obj)) }
-function pickRandom<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)] }
-
-const MOCK_MESSAGES = [
-  'Why is the airlock open?', 'I saw everything.', 'Trust no one.',
-  'The logs were deleted.', 'Something is wrong.', 'Who did this?',
-  'I have a bad feeling.', null, null, null,
-]
+import { GameState, Robot, RoomData } from '../types'
 
 // Convert backend GameState (rooms field) to frontend GameState (map field)
 function normalizeState(raw: Record<string, unknown>): GameState {
@@ -25,224 +15,44 @@ function normalizeState(raw: Record<string, unknown>): GameState {
     roomMessages: raw.roomMessages as GameState['roomMessages'],
     voiceOfGod: raw.voiceOfGod as GameState['voiceOfGod'],
     council: raw.council as GameState['council'],
+    lobby: raw.lobby as GameState['lobby'],
   }
 }
 
-function createInitialLobby(): LobbyState {
-  const roomCode = Math.random().toString(36).slice(2, 8).toUpperCase()
-  return {
-    roomId: `room-${roomCode}`,
-    roomCode,
-    qrUrl: `${window.location.origin}/join/${roomCode}`,
-    players: [],
-    isHost: false,
-  }
+const EMPTY_STATE: GameState = {
+  phase: 'lobby',
+  map: [],
+  robots: {},
+  countdown: 0,
+  killersFound: 0,
+  totalKillers: 0,
+  councilCooldown: 0,
 }
 
 export interface GameActions {
-  // Original partner actions
-  setPhase:           (phase: GameState['phase']) => void
-  setCountdown:       (n: number) => void
-  setCouncilCooldown: (n: number) => void
-  addRobot:           (robot: Omit<Robot, 'id'>) => void
-  updateRobot:        (id: string, updates: Partial<Robot>) => void
-  removeRobot:        (id: string) => void
-  moveRobot:          (id: string, roomId: string) => void
-  appendBeliefs:      (id: string, text: string) => void
-  triggerVog:         (message: string) => void
-  // God UI lobby actions
-  joinRoom:           (name: string) => void
-  setReady:           (robotSetup: RobotSetup) => void
-  // Backend game control
-  startGame:          () => void
-  startSimulation:    () => void
-  defineRobot:        (name: string, look: string, identity: string, imageUrl?: string) => void
-  // VoG & council voting
-  submitVog:          (words: string) => void
-  voteVog:            (forGodId: string) => void
-  voteCouncil:        (targetRobotId: string) => void
+  // Lobby
+  joinLobby:      (name: string) => void
+  defineRobot:    (name: string, look: string, identity: string) => void
+  // In-game
+  whisper:        (robotId: string, words: string) => void
+  submitVog:      (words: string) => void
+  voteVog:        (forGodId: string) => void
+  voteCouncil:    (targetRobotId: string) => void
 }
-
-// ─── Mock mode (default) ─────────────────────────────────────────────────────
-
-function useMockState(): { state: GameState; actions: GameActions } {
-  const [state, setState] = useState<GameState>(() => ({
-    ...deepClone(mockState),
-    phase: 'lobby' as const,
-    lobby: createInitialLobby(),
-  }))
-  const ref = useRef<GameState>(state)
-  ref.current = state
-
-  const update = useCallback((fn: (s: GameState) => GameState) => {
-    const next = fn(deepClone(ref.current))
-    ref.current = next
-    setState(deepClone(next))
-  }, [])
-
-  useEffect(() => {
-    const countdownTimer = setInterval(() => {
-      update(s => {
-        if (s.phase !== 'playing') return s
-        if (s.countdown <= 1) {
-          const robots = { ...s.robots }
-          Object.keys(robots).forEach(id => {
-            if (robots[id].status === 'alive') {
-              const prev = robots[id].beliefs
-              robots[id] = { ...robots[id], beliefs: prev ? `${prev} · [VoG]` : '[VoG]' }
-            }
-          })
-          return { ...s, countdown: 30, phase: 'vog', robots }
-        }
-        return { ...s, countdown: s.countdown - 1 }
-      })
-    }, 1000)
-
-    const vogRestoreTimer = setInterval(() => {
-      update(s => s.phase === 'vog' ? { ...s, phase: 'playing' } : s)
-    }, 10000)
-
-    const cooldownTimer = setInterval(() => {
-      update(s => s.councilCooldown > 0 ? { ...s, councilCooldown: s.councilCooldown - 1 } : s)
-    }, 1000)
-
-    const moveTimer = setInterval(() => {
-      update(s => {
-        if (s.phase !== 'playing' && s.phase !== 'vog') return s
-        const alive = Object.values(s.robots).filter(r => r.status === 'alive')
-        if (!alive.length) return s
-        const robot = pickRandom(alive)
-        const currentRoom = s.map.find(r => r.id === robot.roomId)
-        if (!currentRoom || !currentRoom.connections.length) return s
-        const nextRoomId = pickRandom(currentRoom.connections)
-        const map = s.map.map(r => ({
-          ...r,
-          robots: r.id === nextRoomId
-            ? (r.robots.includes(robot.id) ? r.robots : [...r.robots, robot.id])
-            : r.robots.filter(id => id !== robot.id),
-        }))
-        const msg = Math.random() < 0.35 ? pickRandom(MOCK_MESSAGES) : robot.lastMessage
-        return {
-          ...s, map,
-          robots: { ...s.robots, [robot.id]: { ...robot, roomId: nextRoomId, lastMessage: msg } },
-        }
-      })
-    }, 2000)
-
-    return () => {
-      clearInterval(countdownTimer)
-      clearInterval(vogRestoreTimer)
-      clearInterval(cooldownTimer)
-      clearInterval(moveTimer)
-    }
-  }, [update])
-
-  const actions: GameActions = {
-    setPhase: phase => update(s => ({ ...s, phase })),
-    setCountdown: n => update(s => ({ ...s, countdown: n })),
-    setCouncilCooldown: n => update(s => ({ ...s, councilCooldown: n })),
-
-    addRobot: robot => update(s => {
-      const id = `bot_${Date.now()}`
-      const roomId = robot.roomId || s.map[0].id
-      return {
-        ...s,
-        map: s.map.map(r => ({ ...r, robots: r.id === roomId ? [...r.robots, id] : r.robots })),
-        robots: { ...s.robots, [id]: { ...robot, id, roomId } },
-      }
-    }),
-
-    updateRobot: (id, updates) => update(s => ({
-      ...s, robots: { ...s.robots, [id]: { ...s.robots[id], ...updates } },
-    })),
-
-    removeRobot: id => update(s => {
-      const { [id]: _, ...rest } = s.robots
-      return { ...s, robots: rest, map: s.map.map(r => ({ ...r, robots: r.robots.filter(rid => rid !== id) })) }
-    }),
-
-    moveRobot: (id, roomId) => update(s => ({
-      ...s,
-      map: s.map.map(r => ({
-        ...r,
-        robots: r.id === roomId
-          ? (r.robots.includes(id) ? r.robots : [...r.robots, id])
-          : r.robots.filter(rid => rid !== id),
-      })),
-      robots: { ...s.robots, [id]: { ...s.robots[id], roomId } },
-    })),
-
-    appendBeliefs: (id, text) => update(s => {
-      const prev = s.robots[id]?.beliefs ?? ''
-      return { ...s, robots: { ...s.robots, [id]: { ...s.robots[id], beliefs: prev ? `${prev} · ${text}` : text } } }
-    }),
-
-    triggerVog: message => {
-      update(s => {
-        const robots = { ...s.robots }
-        Object.keys(robots).forEach(id => {
-          if (robots[id].status === 'alive') {
-            const prev = robots[id].beliefs
-            robots[id] = { ...robots[id], beliefs: prev ? `${prev} · ${message}` : message }
-          }
-        })
-        return { ...s, phase: 'vog', countdown: 30, robots }
-      })
-    },
-
-    // Backend game control (no-ops in mock mode)
-    startGame:       () => { /* mock: auto-started */ },
-    startSimulation: () => { /* mock: auto-started */ },
-    defineRobot:     () => { /* mock: use addRobot instead */ },
-    submitVog:       () => { /* mock: use triggerVog instead */ },
-    voteVog:         () => { /* mock: not applicable */ },
-    voteCouncil:     () => { /* mock: not applicable */ },
-
-    // God UI lobby actions
-    joinRoom: (name) => update(s => {
-      const playerId = `god_${Math.random().toString(36).slice(2, 8)}`
-      const player: Player = {
-        id: playerId,
-        name,
-        isHost: !s.lobby?.players.length,
-        isConnected: true,
-        isReady: false,
-      }
-      return {
-        ...s,
-        lobby: s.lobby ? {
-          ...s.lobby,
-          players: [...s.lobby.players, player],
-          isHost: !s.lobby.players.length,
-        } : undefined,
-      }
-    }),
-
-    setReady: (_robotSetup) => update(s => {
-      if (!s.lobby?.players.length) return s
-      const players = s.lobby.players.map((p, i) =>
-        i === s.lobby!.players.length - 1 ? { ...p, isReady: true, robotSetup: _robotSetup } : p
-      )
-      const allReady = players.length >= 2 && players.every(p => p.isReady)
-      return {
-        ...s,
-        lobby: { ...s.lobby, players },
-        phase: allReady ? 'playing' : s.phase,
-      }
-    }),
-  }
-
-  return { state, actions }
-}
-
-// ─── WebSocket mode ───────────────────────────────────────────────────────────
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:3001'
-const GOD_ID  = `god_${Math.random().toString(36).slice(2, 8)}`
+const GOD_ID = `god_${Math.random().toString(36).slice(2, 8)}`
 
-function useWsState(): { state: GameState; actions: GameActions; connected: boolean } {
-  const [state, setState] = useState<GameState>(() => deepClone(mockState))
+export function useGameState(): {
+  state: GameState
+  actions: GameActions
+  connected: boolean
+  godId: string
+  roomCode: string | null
+} {
+  const [state, setState] = useState<GameState>(EMPTY_STATE)
   const [connected, setConnected] = useState(false)
+  const [roomCode, setRoomCode] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
   const send = useCallback((msg: object) => {
@@ -261,13 +71,14 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
 
       ws.onopen = () => {
         setConnected(true)
-        ws.send(JSON.stringify({ type: 'join', godId: GOD_ID }))
       }
 
       ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data)
         if (msg.type === 'state') {
           setState(normalizeState(msg.data))
+        } else if (msg.type === 'roomInfo') {
+          setRoomCode(msg.roomCode)
         }
       }
 
@@ -288,43 +99,13 @@ function useWsState(): { state: GameState; actions: GameActions; connected: bool
   }, [])
 
   const actions: GameActions = {
-    setPhase:           () => { /* server controls phase */ },
-    setCountdown:       () => { /* server controls countdown */ },
-    setCouncilCooldown: () => { /* server controls cooldown */ },
-    addRobot:           () => { /* use defineRobot instead */ },
-    updateRobot:        () => { /* server controls */ },
-    removeRobot:        () => { /* server controls */ },
-    moveRobot:          () => { /* server controls movement */ },
-    appendBeliefs: (id, text) => send({ type: 'whisper', godId: GOD_ID, targetRobotId: id, words: text }),
-    triggerVog:    (message)  => send({ type: 'submitVog', godId: GOD_ID, words: message }),
-    joinRoom:      ()         => { /* auto-joined on WS connect */ },
-    setReady:      (setup)    => {
-      send({ type: 'defineRobot', godId: GOD_ID, name: setup.robotName, look: setup.robotLook, identity: setup.robotIdentity })
-    },
-    // Backend game control
-    startGame:       ()                          => send({ type: 'startGame', godId: GOD_ID }),
-    startSimulation: ()                          => send({ type: 'startSimulation', godId: GOD_ID }),
-    defineRobot:     (name, look, identity, imageUrl) => send({ type: 'defineRobot', godId: GOD_ID, name, look, identity, imageUrl }),
-    // VoG & council voting
-    submitVog:       (words)          => send({ type: 'submitVog', godId: GOD_ID, words }),
-    voteVog:         (forGodId)       => send({ type: 'voteVog', godId: GOD_ID, forGodId }),
-    voteCouncil:     (targetRobotId)  => send({ type: 'voteCouncil', godId: GOD_ID, targetAgentId: targetRobotId }),
+    joinLobby: (name) => send({ type: 'join', godId: GOD_ID, name }),
+    defineRobot: (name, look, identity) => send({ type: 'defineRobot', godId: GOD_ID, name, look, identity }),
+    whisper: (robotId, words) => send({ type: 'whisper', godId: GOD_ID, targetRobotId: robotId, words }),
+    submitVog: (words) => send({ type: 'submitVog', godId: GOD_ID, words }),
+    voteVog: (forGodId) => send({ type: 'voteVog', godId: GOD_ID, forGodId }),
+    voteCouncil: (targetRobotId) => send({ type: 'voteCouncil', godId: GOD_ID, targetAgentId: targetRobotId }),
   }
 
-  return { state, actions, connected }
-}
-
-// ─── Auto-select mode based on VITE_WS_URL env var or ?live param ─────────────
-
-export function useGameState(): { state: GameState; actions: GameActions; wsConnected?: boolean } {
-  const useLive = typeof window !== 'undefined'
-    && (new URLSearchParams(window.location.search).has('live')
-        || import.meta.env.VITE_WS_URL)
-
-  // Always call both hooks (Rules of Hooks); only expose the active one
-  const mock = useMockState()
-  const ws   = useWsState()
-
-  if (useLive) return { state: ws.state, actions: ws.actions, wsConnected: ws.connected }
-  return { state: mock.state, actions: mock.actions }
+  return { state, actions, connected, godId: GOD_ID, roomCode }
 }
