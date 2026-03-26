@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "backend": "cd backend && npm run ws-server",
+    "backend:install": "cd backend && npm install"
   },
   "dependencies": {
     "phaser": "^3.87.0",

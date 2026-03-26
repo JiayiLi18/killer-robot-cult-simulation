@@ -3,7 +3,9 @@
     "allow": [
       "Bash(printf \"\\\\nkillerrobotcult\\\\n\")",
       "Bash(npm create:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }

@@ -17,6 +17,13 @@ export type Robot = {
   lastMessage?: string | null   // shown as speech bubble (transient, display-only)
 }
 
+export type RoomMessage = {
+  from: string
+  fromName: string
+  message: string
+  tick: number
+}
+
 export type GameState = {
   phase: 'lobby' | 'setup' | 'playing' | 'vog' | 'council' | 'ended'
   map: RoomData[]
@@ -25,4 +32,5 @@ export type GameState = {
   killersFound: number
   totalKillers: number
   councilCooldown: number
+  roomMessages?: Record<string, RoomMessage[]>
 }
