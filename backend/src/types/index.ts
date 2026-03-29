@@ -124,7 +124,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   voiceOfGodSelectionRate: 0.1,
   voiceOfGodSubmitTicks: 30,
   voiceOfGodVoteTicks: 30,
-  councilDurationTicks: 30,
+  councilDurationTicks: 20,
   councilCooldownTicks: 30,
   voiceOfGodIntervalTicks: 60,
   ticksPerSecond: 1,
