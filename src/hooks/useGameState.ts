@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { GameState, Robot, RoomData, Player, RobotSetup, LobbyState } from '../types'
+import { GameState, GameSummary, Robot, RoomData, Player, RobotSetup, LobbyState } from '../types'
 import { mockState } from '../mockState'
 
 function deepClone<T>(obj: T): T { return JSON.parse(JSON.stringify(obj)) }
@@ -16,12 +16,18 @@ function normalizeState(raw: Record<string, unknown>): GameState {
   const rooms = (raw.rooms ?? raw.map) as RoomData[]
   return {
     phase: raw.phase as GameState['phase'],
+    tick: (raw.tick as number) ?? 0,
     map: rooms,
     robots: raw.robots as Record<string, Robot>,
     countdown: raw.countdown as number,
     killersFound: raw.killersFound as number,
     totalKillers: raw.totalKillers as number,
     councilCooldown: raw.councilCooldown as number,
+    gracePeriodRemaining: (raw.gracePeriodRemaining as number) ?? 0,
+    nextVogIn: (raw.nextVogIn as number) ?? 0,
+    llmStats: raw.llmStats as GameState['llmStats'],
+    ejections: raw.ejections as GameState['ejections'],
+    summary: raw.summary as GameSummary | undefined,
     roomMessages: raw.roomMessages as GameState['roomMessages'],
     voiceOfGod: raw.voiceOfGod as GameState['voiceOfGod'],
     council: raw.council as GameState['council'],
@@ -83,12 +89,16 @@ export interface GameActions {
   setLobbyReady:      (ready: boolean) => void
   // Backend game control
   startGame:          () => void
-  startSimulation:    () => void
+  startSimulation:    (npcCount?: number) => void
   defineRobot:        (name: string, look: string, identity: string, imageUrl?: string) => void
   // VoG & council voting
   submitVog:          (words: string) => void
   voteVog:            (forGodId: string) => void
   voteCouncil:        (targetRobotId: string) => void
+  // Council & game control
+  callCouncil:        () => void
+  endGame:            () => void
+  playAgain:          () => void
 }
 
 // ─── Mock mode (default) ─────────────────────────────────────────────────────
@@ -227,6 +237,9 @@ function useMockState(enabled: boolean): { state: GameState; actions: GameAction
     submitVog:       () => { /* mock: use triggerVog instead */ },
     voteVog:         () => { /* mock: not applicable */ },
     voteCouncil:     () => { /* mock: not applicable */ },
+    callCouncil:     () => update(s => ({ ...s, phase: 'council' })),
+    endGame:         () => update(s => ({ ...s, phase: 'lobby' })),
+    playAgain:       () => update(s => ({ ...s, phase: 'lobby' })),
 
     // God UI lobby actions
     setLobbyReady: () => {},
@@ -290,12 +303,15 @@ function createInitialLiveState(): GameState {
   return {
     ...deepClone(mockState),
     phase: 'lobby',
+    tick: 0,
     map: [],
     robots: {},
     countdown: 0,
     killersFound: 0,
     totalKillers: 0,
     councilCooldown: 0,
+    gracePeriodRemaining: 0,
+    nextVogIn: 0,
     roomMessages: {},
     lobby: createInitialLobby(),
   }
@@ -428,12 +444,15 @@ function useWsState(enabled: boolean): { state: GameState; actions: GameActions;
     },
     // Backend game control
     startGame:       ()                          => send({ type: 'startGame', godId }),
-    startSimulation: ()                          => send({ type: 'startSimulation', godId }),
+    startSimulation: (npcCount?: number)         => send({ type: 'startSimulation', godId, npcCount: npcCount ?? 0 }),
     defineRobot:     (name, look, identity, imageUrl) => send({ type: 'defineRobot', godId, name, look, identity, imageUrl }),
     // VoG & council voting
     submitVog:       (words)          => send({ type: 'submitVog', godId, words }),
     voteVog:         (forGodId)       => send({ type: 'voteVog', godId, forGodId }),
     voteCouncil:     (targetRobotId)  => send({ type: 'voteCouncil', godId, targetAgentId: targetRobotId }),
+    callCouncil:     ()              => send({ type: 'callCouncil', godId }),
+    endGame:         ()              => send({ type: 'endGame', godId }),
+    playAgain:       ()              => send({ type: 'playAgain', godId }),
   }
 
   return { state, actions, connected, godId }

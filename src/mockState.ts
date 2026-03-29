@@ -20,8 +20,11 @@ export const mockState: GameState = {
     bot5: { id:'bot5', name:'NEXO', look:'💡', identity:'Scientist',          beliefs:'',             status:'dead',    roomId:'lab',     imageUrl:'https://api.dicebear.com/7.x/bottts/svg?seed=nexo',    lastMessage:null },
     bot6: { id:'bot6', name:'SERA', look:'🛡️', identity:'Security Officer',   beliefs:'',             status:'ejected', roomId:'airlock', imageUrl:'https://api.dicebear.com/7.x/bottts/svg?seed=sera',    lastMessage:null },
   },
+  tick: 0,
   countdown: 30,
   killersFound: 1,
   totalKillers: 2,
   councilCooldown: 0,
+  gracePeriodRemaining: 0,
+  nextVogIn: 0,
 }

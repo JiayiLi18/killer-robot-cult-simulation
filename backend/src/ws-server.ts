@@ -103,6 +103,8 @@ function createRoom(roomId: RoomId): RoomRuntime {
       console.log(`[game:${roomId}] voice of god: "${entry.words}"`);
     },
   });
+  // Re-broadcast when LLM narrative arrives (after game ends)
+  game.getEngine().setNarrativeCallback(() => broadcastRoom(roomId));
   rooms.set(roomId, rr);
   return rr;
 }
@@ -337,7 +339,48 @@ wss.on('connection', (ws) => {
           sendError(ws, 'Everyone must finish robot setup');
           return;
         }
-        room.game.startSimulation();
+        const npcCount = typeof msg.npcCount === 'number' ? Math.max(0, Math.min(12, Math.floor(msg.npcCount))) : 0;
+        room.game.startSimulation(npcCount);
+        console.log(`[game:${meta.roomId}] simulation started with ${connected.length} players + ${npcCount} NPCs`);
+        broadcastRoom(meta.roomId);
+        break;
+      }
+
+      case 'endGame': {
+        if (!godId || godId !== room.hostId) {
+          sendError(ws, 'Only the host can end the game');
+          return;
+        }
+        room.game.stop();
+        // Force to ended phase via a reset-like approach
+        room.game.reset();
+        for (const p of room.players.values()) {
+          if (p.isConnected) {
+            room.game.joinGame(p.id);
+            p.lobbyReady = false;
+            p.setupReady = false;
+          }
+        }
+        console.log(`[game:${meta.roomId}] game ended by host`);
+        broadcastRoom(meta.roomId);
+        break;
+      }
+
+      case 'playAgain': {
+        if (!godId || godId !== room.hostId) {
+          sendError(ws, 'Only the host can restart');
+          return;
+        }
+        room.game.reset();
+        // Re-join all connected players
+        for (const p of room.players.values()) {
+          if (p.isConnected) {
+            room.game.joinGame(p.id);
+            p.lobbyReady = false;
+            p.setupReady = false;
+          }
+        }
+        console.log(`[game:${meta.roomId}] game reset by host`);
         broadcastRoom(meta.roomId);
         break;
       }
@@ -369,6 +412,25 @@ wss.on('connection', (ws) => {
         }
         const result = room.game.voteVoiceOfGod(godId, msg.forGodId as GodId);
         ws.send(JSON.stringify({ type: 'voteVog', ...result }));
+        break;
+      }
+
+      case 'callCouncil': {
+        if (!godId) {
+          sendError(ws, 'godId required');
+          return;
+        }
+        const god2 = room.players.get(godId);
+        if (!god2) {
+          sendError(ws, 'Not in room');
+          return;
+        }
+        const result = room.game.callCouncil(godId);
+        ws.send(JSON.stringify({ type: 'callCouncil', ...result }));
+        if (result.success) {
+          console.log(`[game:${meta.roomId}] council called by god ${godId}`);
+          broadcastRoom(meta.roomId);
+        }
         break;
       }
 

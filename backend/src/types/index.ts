@@ -113,6 +113,8 @@ export interface GameConfig {
   ticksPerSecond: number;
   maxWords: number;
   killerRatio: number;
+  gracePeriodTicks: number;
+  killCooldownTicks: number;
 }
 
 export const DEFAULT_CONFIG: GameConfig = {
@@ -122,12 +124,14 @@ export const DEFAULT_CONFIG: GameConfig = {
   voiceOfGodSelectionRate: 0.1,
   voiceOfGodSubmitTicks: 30,
   voiceOfGodVoteTicks: 30,
-  councilDurationTicks: 60,
+  councilDurationTicks: 20,
   councilCooldownTicks: 30,
   voiceOfGodIntervalTicks: 60,
   ticksPerSecond: 1,
   maxWords: 3,
   killerRatio: 0.25,
+  gracePeriodTicks: 30,
+  killCooldownTicks: 20,
 };
 
 // --- Agent Actions ---
@@ -194,15 +198,39 @@ export interface EngineEvent {
 }
 
 // --- Game State Snapshot (what FE receives every tick) ---
+export interface GameSummary {
+  winner: "crew" | "killers";
+  duration: number;
+  kills: { victimName: string; killerName: string; tick: number }[];
+  ejections: { name: string; wasKiller: boolean; tick: number }[];
+  survivors: { name: string; role: AgentRole }[];
+  killers: string[];
+  narrative?: string;
+  llmCost: number;
+}
+
+export interface LLMStats {
+  requests: number;
+  tokens: number;
+  errors: number;
+  estimatedCost: number;
+}
+
 export interface GameState {
   phase: GamePhase;
+  tick: number;
   rooms: Room[];
   robots: Record<string, Robot>;
   countdown: number;
   killersFound: number;
   totalKillers: number;
   councilCooldown: number;
+  gracePeriodRemaining: number;
+  nextVogIn: number;
   roomMessages: Record<RoomId, RoomMessage[]>; // recent chat per room
+  llmStats?: LLMStats;
+  ejections?: { name: string; wasKiller: boolean; tick: number }[];
+  summary?: GameSummary;
   council?: {
     messages: CouncilMessage[];
     votes: Record<string, string>;
@@ -230,6 +258,7 @@ export interface AgentContext {
 
 export interface LLMProvider {
   generate(prompt: string): Promise<string>;
+  getStats?(): { totalRequests: number; totalTokens: number; errors: number };
 }
 
 // --- Pending action generation ---

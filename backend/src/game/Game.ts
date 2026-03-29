@@ -22,6 +22,8 @@ export interface GameEvents {
 export class Game {
   private engine: Engine;
   private config: GameConfig;
+  private llm: LLMProvider | null = null;
+  private events: GameEvents = {};
 
   constructor(config?: Partial<GameConfig>) {
     this.config = { ...defaultConfig, ...config };
@@ -29,10 +31,12 @@ export class Game {
   }
 
   setLLM(llm: LLMProvider): void {
+    this.llm = llm;
     this.engine.setLLM(llm);
   }
 
   on(events: GameEvents): void {
+    this.events = events;
     this.engine.on(events);
   }
 
@@ -82,8 +86,16 @@ export class Game {
     return { success: true, agentId: agent.id };
   }
 
-  startSimulation(): void {
-    this.engine.startSimulation();
+  startSimulation(npcCount = 0): void {
+    this.engine.startSimulation(npcCount);
+  }
+
+  /** Reset game for a new round — preserves LLM and callbacks */
+  reset(): void {
+    this.engine.stop();
+    this.engine = new Engine(this.config);
+    if (this.llm) this.engine.setLLM(this.llm);
+    if (this.events) this.engine.on(this.events);
   }
 
   // ==================== PLAYING ====================
@@ -114,6 +126,10 @@ export class Game {
   }
 
   // ==================== COUNCIL ====================
+
+  callCouncil(godId: GodId): { success: boolean; error?: string } {
+    return this.engine.callCouncilByGod(godId);
+  }
 
   voteInCouncil(godId: GodId, targetAgentId: AgentId | 'skip'): { success: boolean } {
     return { success: this.engine.voteInCouncil(godId, targetAgentId) };
