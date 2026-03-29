@@ -4,6 +4,7 @@ import { GameScene } from './GameScene'
 import { GameState } from '../../types'
 import { HUD } from '../../hud/HUD'
 import { RobotInfoPanel } from '../../hud/RobotInfoPanel'
+import { EventLog, useEventLog } from '../../hud/EventLog'
 import { GameActions } from '../../hooks/useGameState'
 
 interface Props {
@@ -19,6 +20,7 @@ export function GameWorldScreen({ state, actions }: Props) {
   latestStateRef.current = state
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const logEntries = useEventLog(state)
 
   // Mount Phaser
   useEffect(() => {
@@ -61,6 +63,9 @@ export function GameWorldScreen({ state, actions }: Props) {
 
       {/* HUD overlay */}
       <HUD state={state} />
+
+      {/* Event log — left side */}
+      <EventLog entries={logEntries} />
 
       {/* Robot info panel — slides up from bottom on click */}
       {selectedRobot && (

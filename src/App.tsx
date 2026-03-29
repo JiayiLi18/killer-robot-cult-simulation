@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useGameState } from './hooks/useGameState'
 import { GameWorldScreen } from './screens/GameWorld/GameWorldScreen'
 import { DevPanel } from './hud/DevPanel'
@@ -33,6 +33,7 @@ function LobbyPhase({ onJoin, lobby, actions, phase, isLive, wsConnected, curren
   const [robotName, setRobotName] = useState('')
   const [robotIdentity, setRobotIdentity] = useState('')
   const [robotLook, setRobotLook] = useState('')
+  const [npcCount, setNpcCount] = useState(0)
 
   const currentPlayer = lobby.players.find((player) => player.id === currentPlayerId)
   const isReady = currentPlayer?.isReady ?? false
@@ -162,13 +163,29 @@ function LobbyPhase({ onJoin, lobby, actions, phase, isLive, wsConnected, curren
               </div>
             )}
             {isLive && isHost && (
-              <button
-                onClick={() => actions.startSimulation()}
-                disabled={!canLaunchSimulation || !wsConnected}
-                className="w-full py-3 bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded-lg font-mono font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Launch Simulation
-              </button>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-gray-400 text-xs font-mono uppercase tracking-wider mb-1">NPC Robots</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      min={0}
+                      max={12}
+                      value={npcCount}
+                      onChange={(e) => setNpcCount(Math.max(0, Math.min(12, parseInt(e.target.value) || 0)))}
+                      className="w-20 px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm outline-none focus:border-cyan-400 text-center"
+                    />
+                    <span className="text-gray-500 text-xs font-mono">AI-controlled robots (0–12)</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => actions.startSimulation(npcCount)}
+                  disabled={!canLaunchSimulation || !wsConnected}
+                  className="w-full py-3 bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded-lg font-mono font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Launch Simulation{npcCount > 0 ? ` (+${npcCount} NPCs)` : ''}
+                </button>
+              </div>
             )}
           </div>
         </>
@@ -187,11 +204,21 @@ export default function App() {
 
   const [vogSubmission, setVogSubmission] = useState<string | undefined>()
   const [vogVote, setVogVote] = useState<string | undefined>()
+  const prevVogPhaseRef = useRef<string | undefined>()
+
+  // Reset VoG local state when a new round starts (phase goes to submission)
+  const vogPhase = state.voiceOfGod?.phase
+  if (vogPhase !== prevVogPhaseRef.current) {
+    if (vogPhase === 'submission') {
+      if (vogSubmission !== undefined) setVogSubmission(undefined)
+      if (vogVote !== undefined) setVogVote(undefined)
+    }
+    prevVogPhaseRef.current = vogPhase
+  }
 
   const startCouncil = () => {
     if (state.councilCooldown > 0) return
-    actions.setPhase('council')
-    setCouncilActive(true)
+    actions.callCouncil()
     setCouncilResult(null)
     setCouncilVote(undefined)
   }
@@ -199,8 +226,6 @@ export default function App() {
   const endCouncil = () => {
     setCouncilActive(false)
     setCouncilResult(null)
-    actions.setPhase('playing')
-    actions.setCouncilCooldown(COUNCIL_COOLDOWN_SECS)
   }
 
   // Build nominees from backend council votes or from alive robots
@@ -220,31 +245,8 @@ export default function App() {
     timestamp: m.tick,
   }))
 
-  // Council phase — full-screen overlay (check before other routing)
-  if (state.phase === 'council' || councilActive) {
-    if (councilResult) {
-      return (
-        <CouncilResult
-          result={councilResult}
-          robots={state.robots}
-          onContinue={endCouncil}
-        />
-      )
-    }
-    const msgs = backendCouncilMessages.length > 0 ? backendCouncilMessages : councilMessages
-    return (
-      <CouncilChat
-        messages={msgs}
-        nominees={nominees}
-        myVote={councilVote}
-        robots={state.robots}
-        onVote={(robotId) => {
-          setCouncilVote(robotId)
-          actions.voteCouncil(robotId)
-        }}
-      />
-    )
-  }
+  // Council phase — no longer takes over the screen; game world stays visible
+  // Council events show in the event log; player can vote via the bottom panel
 
   // Phase routing
   if (state.phase === 'lobby' || state.phase === 'setup') {
@@ -269,7 +271,8 @@ export default function App() {
       <EndingScreen
         killersFound={state.killersFound}
         totalKillers={state.totalKillers}
-        onPlayAgain={() => actions.setPhase('lobby')}
+        summary={state.summary}
+        onPlayAgain={() => actions.playAgain()}
       />
     )
   }
@@ -308,6 +311,62 @@ export default function App() {
       {vog?.phase === 'done' && vog.winnerWords && (
         <VoGAnnounce announcement={vog.winnerWords} />
       )}
+
+      {/* Council vote panel — top bar below HUD during council phase */}
+      {state.phase === 'council' && (
+        <div className="fixed top-12 left-72 right-0 z-40">
+          <div className="bg-surface/95 backdrop-blur-md border-b border-red-900/50 px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-red-400 font-mono text-sm font-bold uppercase tracking-widest">
+                Council Vote
+              </h3>
+              <span className="text-red-400/60 font-mono text-xs">{state.countdown}s</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {nominees.filter(n => n.robotId !== '').map(n => (
+                <button
+                  key={n.robotId}
+                  onClick={() => {
+                    setCouncilVote(n.robotId)
+                    actions.voteCouncil(n.robotId)
+                  }}
+                  disabled={!!councilVote}
+                  className={`px-3 py-1.5 rounded-lg font-mono text-xs border transition-all ${
+                    councilVote === n.robotId
+                      ? 'bg-red-500/20 border-red-500 text-white'
+                      : 'bg-gray-900 border-gray-700 text-gray-300 hover:border-gray-500'
+                  } disabled:cursor-default`}
+                >
+                  {n.robotName} {n.votes > 0 ? `(${n.votes})` : ''}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  setCouncilVote('skip')
+                  actions.voteCouncil('skip')
+                }}
+                disabled={!!councilVote}
+                className={`px-3 py-1.5 rounded-lg font-mono text-xs border transition-all ${
+                  councilVote === 'skip'
+                    ? 'bg-gray-500/20 border-gray-500 text-white'
+                    : 'bg-gray-900 border-gray-700 text-gray-500 hover:border-gray-500'
+                } disabled:cursor-default`}
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* End Game button — top right */}
+      <button
+        onClick={() => { if (confirm('End the game and return to lobby?')) actions.endGame() }}
+        className="fixed top-2 right-14 z-50 px-2.5 py-1 rounded-full text-xs font-mono"
+        style={{ background: 'rgba(60,20,20,0.9)', border: '1px solid rgba(180,40,40,0.5)', color: '#d06060' }}
+      >
+        End Game
+      </button>
 
       {/* WS connection indicator (live mode only) */}
       {wsConnected !== undefined && (

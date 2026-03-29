@@ -41,14 +41,38 @@ export type Player = {
   robotSetup?: RobotSetup
 }
 
+export type LLMStats = {
+  requests: number
+  tokens: number
+  errors: number
+  estimatedCost: number
+}
+
+export type GameSummary = {
+  winner: 'crew' | 'killers'
+  duration: number
+  kills: { victimName: string; killerName: string; tick: number }[]
+  ejections: { name: string; wasKiller: boolean; tick: number }[]
+  survivors: { name: string; role: string }[]
+  killers: string[]
+  narrative?: string
+  llmCost: number
+}
+
 export type GameState = {
   phase: 'lobby' | 'setup' | 'playing' | 'vog' | 'council' | 'ended'
+  tick: number
   map: RoomData[]
   robots: Record<string, Robot>
   countdown: number
   killersFound: number
   totalKillers: number
   councilCooldown: number
+  gracePeriodRemaining: number
+  llmStats?: LLMStats
+  ejections?: { name: string; wasKiller: boolean; tick: number }[]
+  summary?: GameSummary
+  nextVogIn: number
   roomMessages?: Record<string, RoomMessage[]>
   // Backend-provided VoG round state
   voiceOfGod?: {

@@ -17,7 +17,11 @@ function fmt(s: number) {
 
 export function HUD({ state }: Props) {
   const ps = PHASE_STYLE[state.phase]
-  const isUrgent = state.countdown <= 10
+  const robots = Object.values(state.robots)
+  const aliveCount = robots.filter(r => r.status === 'alive').length
+  const deadCount = robots.filter(r => r.status === 'dead').length
+  const ejectedCount = robots.filter(r => r.status === 'ejected').length
+  const killersAlive = state.totalKillers - state.killersFound
 
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 100 }}>
@@ -30,16 +34,73 @@ export function HUD({ state }: Props) {
           {ps.label}
         </span>
 
-        {/* VoG countdown — center */}
-        <div className="flex flex-col items-center">
-          <span className="text-xs text-gray-500 uppercase tracking-widest leading-none mb-0.5">
-            Next VoG
-          </span>
-          <span className={`text-xl font-mono font-bold tabular-nums leading-none ${
-            isUrgent ? 'text-purple-400 animate-pulse' : 'text-gray-200'
-          }`}>
-            {fmt(state.countdown)}
-          </span>
+        {/* Stats row */}
+        <div className="flex items-center gap-4">
+          {/* Tick */}
+          <div className="flex flex-col items-center">
+            <span className="text-[10px] text-gray-500 uppercase tracking-widest leading-none">Tick</span>
+            <span className="text-sm font-mono font-bold text-gray-300 tabular-nums">{state.tick}</span>
+          </div>
+
+          {/* Grace period */}
+          {state.gracePeriodRemaining > 0 && (
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-yellow-500 uppercase tracking-widest leading-none">Grace</span>
+              <span className="text-sm font-mono font-bold text-yellow-300 tabular-nums">{fmt(state.gracePeriodRemaining)}</span>
+            </div>
+          )}
+
+          {/* Next VoG */}
+          {state.phase === 'playing' && (
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-purple-400 uppercase tracking-widest leading-none">Next VoG</span>
+              <span className="text-sm font-mono font-bold text-purple-300 tabular-nums">{fmt(state.nextVogIn)}</span>
+            </div>
+          )}
+
+          {/* VoG countdown during VoG phase */}
+          {state.phase === 'vog' && (
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-purple-400 uppercase tracking-widest leading-none">VoG</span>
+              <span className="text-sm font-mono font-bold text-purple-300 tabular-nums animate-pulse">{fmt(state.countdown)}</span>
+            </div>
+          )}
+
+          {/* Alive count */}
+          <div className="flex flex-col items-center">
+            <span className="text-[10px] text-green-500 uppercase tracking-widest leading-none">Alive</span>
+            <span className="text-sm font-mono font-bold text-green-300 tabular-nums">{aliveCount}</span>
+          </div>
+
+          {/* Dead count */}
+          {deadCount > 0 && (
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-gray-500 uppercase tracking-widest leading-none">Dead</span>
+              <span className="text-sm font-mono font-bold text-gray-400 tabular-nums">{deadCount}</span>
+            </div>
+          )}
+
+          {/* Ejected count */}
+          {ejectedCount > 0 && (
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-orange-500 uppercase tracking-widest leading-none">Ejected</span>
+              <span className="text-sm font-mono font-bold text-orange-300 tabular-nums">{ejectedCount}</span>
+            </div>
+          )}
+
+          {/* Killers alive */}
+          <div className="flex flex-col items-center">
+            <span className="text-[10px] text-red-500 uppercase tracking-widest leading-none">Killers</span>
+            <span className="text-sm font-mono font-bold text-red-400 tabular-nums">{killersAlive}</span>
+          </div>
+
+          {/* LLM cost */}
+          {state.llmStats && (
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-cyan-500 uppercase tracking-widest leading-none">LLM</span>
+              <span className="text-sm font-mono font-bold text-cyan-300 tabular-nums">${state.llmStats.estimatedCost.toFixed(4)}</span>
+            </div>
+          )}
         </div>
 
         {/* Killers found */}
@@ -51,19 +112,6 @@ export function HUD({ state }: Props) {
           ))}
         </div>
       </div>
-
-      {/* VoG full-screen overlay */}
-      {state.phase === 'vog' && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none"
-          style={{ background: 'rgba(30,0,60,0.55)' }}>
-          <div className="text-center">
-            <div className="text-5xl font-bold text-purple-200 tracking-widest animate-pulse drop-shadow-lg">
-              ✦ VOICE OF GOD ✦
-            </div>
-            <div className="text-sm text-purple-400 mt-2 tracking-widest">The gods are watching…</div>
-          </div>
-        </div>
-      )}
 
       {/* Game Over */}
       {state.phase === 'ended' && (

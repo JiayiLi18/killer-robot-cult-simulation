@@ -30,6 +30,7 @@ export class Agent {
   imageUrl: string = "";
   beliefs: string = ""; // concatenation of whisper/voice of god
   lastMessage?: string;
+  lastMessageTick = -Infinity;
 
   // Action queue (AI Town pattern)
   actionQueue: AgentAction[] = [];
@@ -40,6 +41,7 @@ export class Agent {
   // Cooldowns
   lastCouncilCall = -Infinity;
   lastKillTick = -Infinity;
+  lastTalkTick = -Infinity;
 
   constructor(name: string, look: string, identity: string, roomId: RoomId, role: AgentRole = "crewmate") {
     this.id = uuid();
@@ -109,8 +111,10 @@ export class Agent {
     return this.status === "alive" && currentTick - this.lastCouncilCall >= 30;
   }
 
-  canKill(currentTick: number): boolean {
-    return this.role === "killer" && this.status === "alive" && currentTick - this.lastKillTick >= 10;
+  canKill(currentTick: number, killCooldownTicks = 30, gracePeriodTicks = 60, simulationStartTick = 0): boolean {
+    if (this.role !== "killer" || this.status !== "alive") return false;
+    if (currentTick - simulationStartTick < gracePeriodTicks) return false;
+    return currentTick - this.lastKillTick >= killCooldownTicks;
   }
 
   die(): void {

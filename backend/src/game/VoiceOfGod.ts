@@ -79,9 +79,41 @@ export class VoiceOfGodManager {
   /** Check current phase of the round */
   getPhase(currentTick: number): 'submission' | 'voting' | 'done' | null {
     if (!this.currentRound) return null;
-    if (currentTick <= this.currentRound.submissionDeadline) return 'submission';
-    if (currentTick <= this.currentRound.voteDeadline) return 'voting';
+
+    if (currentTick <= this.currentRound.submissionDeadline) {
+      // End submission early if all selected gods have submitted
+      if (this.allSubmitted()) return this.shouldSkipVoting() ? 'done' : 'voting';
+      return 'submission';
+    }
+
+    // If no submissions or only one, skip voting entirely
+    if (this.shouldSkipVoting()) return 'done';
+
+    if (currentTick <= this.currentRound.voteDeadline) {
+      // End voting early if all gods have voted
+      if (this.allVoted()) return 'done';
+      return 'voting';
+    }
+
     return 'done';
+  }
+
+  /** Check if voting should be skipped (0 or 1 submissions) */
+  private shouldSkipVoting(): boolean {
+    if (!this.currentRound) return true;
+    return this.currentRound.submissions.length <= 1;
+  }
+
+  /** Check if all gods have voted — needs total god count passed in */
+  allVoted(): boolean {
+    if (!this.currentRound) return false;
+    return this.currentRound.votes.size >= this.totalGods;
+  }
+
+  /** Set total god count for early vote completion */
+  private totalGods = 0;
+  setTotalGods(count: number): void {
+    this.totalGods = count;
   }
 
   /** Tally votes and determine the winning Voice of God */
@@ -132,6 +164,11 @@ export class VoiceOfGodManager {
   /** Get current round state */
   getRound(): VoiceOfGodRound | null {
     return this.currentRound;
+  }
+
+  /** Get the tick of the last round end */
+  getLastRoundEnd(): number {
+    return this.lastRoundEnd;
   }
 
   /** Check if submission phase has all submissions */
